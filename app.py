@@ -7,41 +7,31 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import time
-import functions
+import database
 from itertools import combinations
 import subprocess
-import pyotp
 import urllib.parse
-
-languages = [
-    "Franska", "Engelska", "Tyska", "Spanska",
-    "Portugisiska", "Italienska", "Ryska", "Kinesiska", "Arabiska",
-    "Japanska", "Koreanska", "Nederländska", "Grekiska", "Turkiska",
-    "Hebreiska", "Finska", "Danska", "Norska", "Isländska",
-    "Polska", "Ungerska", "Tjeckiska", "Slovakiska", "Kroatiska",
-    "Serbiska", "Rumänska", "Bulgarska", "Ukrainska", "Georgiska",
-    "Persiska", "Hindi", "Bengali", "Tamil", "Urdu",
-    "Malayalam", "Thai", "Vietnamesiska", "Malaysiska", "Indonesiska",
-    "Filippinska", "Sinhala", "Svahili", "Amhariska", "Swahili",
-    "Somaliska", "Fula", "Yoruba", "Zulu"
-]
-
 
 
 load_dotenv()
 app = Flask(__name__)
-app.secret_key = functions.generate_secret_key()
+app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
 
-# Define the password for accessing the /jobs route
-PASSWORD = os.getenv('password')
-
+utbildningar = [
+    "HLR",
+    "Heta arbeten",
+    "Liftutbildning",
+    "Ställningsutbildning",
+    "Säkra lyft",
+    "Arbetsmiljöutbildning",
+    "Första hjälpen",
+    "Brandskyddsutbildning"
+]
 
 @app.route('/logout')
 def logout():
-    session.pop('authenticated', None)
-    session.pop('user_id', None)
-    session.pop('user_email', None)
-    return redirect(url_for('home'))
+    session.clear()
+    return redirect(url_for('index'))
 
 
 @app.route('/')
@@ -49,28 +39,6 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/booking')
-def idontremember():
-    user_name = user_email = user_phone = ''
-    logged_in = False
-    if session.get('user_id'):
-        logged_in = True
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT name, phone FROM logins WHERE id = ?', (session['user_id'],))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            user_name, user_phone = row
-            user_email = session.get('user_email', '')
-    return render_template(
-        'index.html',
-        combo_list=languages,
-        user_name=user_name,
-        user_email=user_email,
-        user_phone=user_phone,
-        logged_in=logged_in,
-    )
 
 
 @app.route('/signup', methods=['GET', 'POST'])
@@ -79,19 +47,83 @@ def signup():
         name = request.form['name']
         email = request.form['email']
         password = request.form['password']
-        
-    return render_template('signup.html')
+        organization_number = request.form['organization_number']
+        if database.check_user_exists(email):
+            return render_template('signup.html', error='A user with this email already exists.')
+        user = database.create_user(name, email, password, organization_number)
+        session['user_id'] = user[0]
+        session['user_name'] = user[1]
+        session['organization_number'] = user[2]
+        session['user_email'] = user[3]
+        return redirect(url_for('login'))
+    else:
+        return render_template('signup.html')
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'GET':
+        if 'user_id' in session:
+            
+            return redirect(url_for('dashboard'))
+    elif request.method == 'POST':
+        email = request.form['email']
+        password = request.form['password']
+        if not email or not password:
+            return render_template('login.html', error='Please enter both email and password.')
+        user = database.login_user(email, password)
+        if user:
+            session['user_id'] = user[0]
+            session['user_name'] = user[1]
+            session['organization_number'] = user[2]
+            session['user_email'] = email
+            return redirect(url_for('dashboard'))
 
+        return render_template('login.html', error='Invalid email or password.')
+    return render_template('login.html')
 
+@app.route('/dashboard')
+def dashboard():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    name = session.get('user_name')
+    organization_number = session.get('organization_number')
+    user_id = session.get('user_id')
+    
+    
+    return render_template('dashboard.html', name=name, organization_number=organization_number)
 
-@app.route('/health')
+@app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint used by deployment platforms."""
     return "OK", 200
 
 
-@app.route('/jobs') # The page to display the list of jobs
+
+@app.route('/booking', methods=['GET', 'POST'])
+def booking():
+    if request.method == 'POST':
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        name = session.get('user_name')
+        email = session.get('user_email')
+        organization_number = session.get('organization_number')
+        utbildning = request.form['utbildning']
+        antal = request.form['antal']
+        ort = request.form['ort']
+        lokal = request.form['lokal']
+        if lokal == 'Egen':
+            lokal = request.form['adress']
+        datum = request.form['datum']
+        database.create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum)
+        return redirect(url_for('dashboard'))
+    if request.method == 'GET':
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        
+        return render_template('book.html', utbildningar=utbildningar)
+
+
+@app.route('/fix_later') # The page to display the list of jobs
 def get_jobs():
     if 'authenticated' not in session or session['authenticated'] == False:
         return render_template('login.html')
@@ -253,7 +285,7 @@ def submit():
         conn = sqlite3.connect('database.db')
         cursor = conn.cursor()
         cursor.execute(
-            'SELECT name, phone, organization_number, billing_address, email_billing_address FROM logins WHERE id = ?',
+            'SELECT name, phone, organization_number, billing_address, email_billing_address FROM users WHERE id = ?',
             (session['user_id'],),
         )
         row = cursor.fetchone()
@@ -262,7 +294,7 @@ def submit():
             return redirect(url_for('user_login'))
         name, phone, organization_number, billing_address, email_billing_address = row
         email = session.get('user_email')
-        if functions.booking_exists(name, email, phone, language, time_start, time_end):
+        if database.booking_exists(name, email, phone, language, time_start, time_end):
             return render_template('error.html', message='This booking already exists.', error_name='409')
         session.update(
             {
@@ -283,7 +315,7 @@ def submit():
     name = request.form['name']
     email = request.form['email']
     phone = request.form['phone']
-    if functions.booking_exists(name, email, phone, language, time_start, time_end):
+    if database.booking_exists(name, email, phone, language, time_start, time_end):
         return render_template('error.html', message='This booking already exists.', error_name='409')
     session.update(
         {
@@ -300,18 +332,7 @@ def submit():
 
 
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        password = request.form['password']
-        if password == PASSWORD:
-            # Store the email in the session
-            session['kursplan_email'] = request.form['email']
-            session['authenticated'] = True
-            return redirect(url_for('get_jobs'))
-        else:
-            return render_template('login.html', error='Invalid password')
-    return render_template('login.html')
+
 
 @app.errorhandler(404)
 def page_not_found(e):
@@ -324,16 +345,16 @@ def page_not_found(e):
         404,
     )
 if __name__ == '__main__':
-    functions.create_databse()  # Ensure the database and tables are created before running the app
+    database.create_databse()  # Ensure the database and tables are created before running the app
 
 
 
     # Ensure a default test account exists for easier manual testing
     email = os.getenv("test_email")
     password = os.getenv("test_password")
-    functions.ensure_test_user(email=email, password=password)
+    database.ensure_test_user(email=email, password=password)
 
-    port = int(os.environ.get("PORT", 80))
-    host = os.environ.get("HOST", "0.0.0.0")
-    debug = os.environ.get("DEBUG", "false").lower() == "true"
-    app.run(port=port, host=host, debug=debug)
+    port = int(os.environ.get("app_port", 80))
+    host = os.environ.get("app_host", "0.0.0.0")
+    debug = os.environ.get("app_debug", "False") == "True" or "true"
+    app.run(port=port, host=host, debug=debug, use_reloader=False)

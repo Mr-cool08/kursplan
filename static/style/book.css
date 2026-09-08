@@ -5,7 +5,8 @@ input[type="email"],
 select,
 input[type="date"],
 input[type="datetime-local"],
-input[type="checkbox"] {
+input[type="checkbox"], 
+input[type="number"] {
     width: 95%;
     padding: 10px;
     border-radius: 4px;

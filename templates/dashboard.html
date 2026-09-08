@@ -15,7 +15,7 @@
     <div class="table-container">
       <table class="dashboard-table">
         <tr>
-          <th>Språk</th>
+          <th>Utbildning</th>
           <th>Starttid</th>
           <th>Sluttid</th>
           <th>Status</th>
@@ -42,9 +42,10 @@
     <p>Du har inga bokningar.</p>
     {% endif %}
     <div class="dashboard-actions">
-      <a href="{{ url_for('index') }}" class="dashboard-button">Gör ny bokning</a>
+      <a href="{{ url_for('booking') }}" class="dashboard-button">Gör ny bokning</a>
       <a href="{{ url_for('logout') }}" class="dashboard-button">Logga ut</a>
-      <a href="{{ removal_link }}" class="dashboard-button">Ta bort konto</a>
     </div>
   </div>
 </div>
+
+{% endblock %}

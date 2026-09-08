@@ -1,5 +1,4 @@
-Flask==2.3.2
+Flask
 python-dotenv
 datetime
 pytest
-pyotp

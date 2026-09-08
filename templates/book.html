@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Hem{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/book.css') }}">
+{% endblock %}
+
+
+{% block content %}
+<h1>Bokning av utbildning</h1>
+    
+<form action="{{ url_for('booking') }}" method="post">
+
+
+    <label for="datum">Datum:</label>
+    <input type="date" id="datum" name="datum" required><br><br>
+
+
+    <label for="utbildning">Utbildning:</label>
+    <select id="utbildning" name="utbildning" required>
+        <option value="" disabled selected hidden>Välj utbildning</option>
+        {% for utbildning in utbildningar %}
+        <option value="{{ utbildning }}">{{ utbildning }}</option>
+        {% endfor %}
+    </select><br><br>
+    <label for="ort">Plats:</label>
+    <input type="text" id="ort" name="ort" placeholder="Ort" required><br><br>
+
+    <label for="antal">Antal deltagare:</label>
+    <input type="number" id="antal" name="antal" min="1" required><br><br>
+
+    <label for="lokal">Lokal:</label>
+    <select id="lokal" name="lokal" required>
+        <option value="" disabled selected hidden>Välj lokal</option>
+        <option value="Egen">Egen lokal</option>
+        <option value="Vi bokar">Ni bokar</option>
+    </select><br><br>
+
+    <div id="adress-container" hidden>
+        <label for="adress">Adress:</label>
+        <input type="text" id="adress" name="adress" placeholder="Adress">
+    </div>
+    <br><br>
+
+    
+    <input type="submit" value="Nästa">
+</form>
+
+
+<script>
+    const lokalSelect = document.getElementById('lokal');
+    const adressContainer = document.getElementById('adress-container');
+    const adressInput = document.getElementById('adress');
+
+    lokalSelect.addEventListener('change', () => {
+        const egenLokal = lokalSelect.value === 'Egen';
+        adressContainer.hidden = !egenLokal;
+        adressInput.required = egenLokal;
+
+        if (!egenLokal) {
+            adressInput.value = '';
+        }
+    });
+</script>
+
+
+{% endblock %}
