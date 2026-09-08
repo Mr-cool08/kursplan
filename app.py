@@ -12,6 +12,9 @@ from itertools import combinations
 import subprocess
 import urllib.parse
 
+db_path = os.getenv("db_path")
+    if not db_path:
+        raise ValueError("Database path is not set in the .env file.")
 
 load_dotenv()
 app = Flask(__name__)
@@ -48,9 +51,9 @@ def signup():
         email = request.form['email']
         password = request.form['password']
         organization_number = request.form['organization_number']
-        if database.check_user_exists(email):
+        if database.check_user_exists(email, db_path):
             return render_template('signup.html', error='A user with this email already exists.')
-        user = database.create_user(name, email, password, organization_number)
+        user = database.create_user(name, email, password, organization_number, db_path)
         session['user_id'] = user[0]
         session['user_name'] = user[1]
         session['organization_number'] = user[2]
@@ -70,7 +73,7 @@ def login():
         password = request.form['password']
         if not email or not password:
             return render_template('login.html', error='Please enter both email and password.')
-        user = database.login_user(email, password)
+        user = database.login_user(email, password, db_path)
         if user:
             session['user_id'] = user[0]
             session['user_name'] = user[1]
@@ -114,7 +117,7 @@ def booking():
         if lokal == 'Egen':
             lokal = request.form['adress']
         datum = request.form['datum']
-        database.create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum)
+        database.create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path)
         return redirect(url_for('dashboard'))
     if request.method == 'GET':
         if 'user_id' not in session:
@@ -345,14 +348,17 @@ def page_not_found(e):
         404,
     )
 if __name__ == '__main__':
-    database.create_databse()  # Ensure the database and tables are created before running the app
+    db_path = os.getenv("db_path")
+    if not db_path:
+        raise ValueError("Database path is not set in the .env file.")
+    database.create_database(db_path)  # Ensure the database and tables are created before running the app
 
 
 
     # Ensure a default test account exists for easier manual testing
     email = os.getenv("test_email")
     password = os.getenv("test_password")
-    database.ensure_test_user(email=email, password=password)
+    database.ensure_test_user(email=email, password=password, db_path=db_path)
 
     port = int(os.environ.get("app_port", 80))
     host = os.environ.get("app_host", "0.0.0.0")

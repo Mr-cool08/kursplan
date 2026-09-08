@@ -11,33 +11,37 @@ def generate_secret_key():
 
 
 
-
-
-def create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum):
+    
+def create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path):
     # Create a new booking in the database.
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO bookings (name, email, organization_number, utbildning, antal, ort, lokal, datum) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (name, email, organization_number, utbildning, antal, ort, lokal, datum),
     )
+    booking_id = cursor.lastrowid  # Get the ID of the newly created booking
     conn.commit()
     conn.close()
-def check_user_exists(email):
+    return booking_id  # Return the ID of the newly created booking
+
+
+def check_user_exists(email, db_path):
     # Check if a user with the given email exists in the database.
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
+    conn.commit()
     conn.close()
     return user is not None
 
 
 
 
-def create_user(name, email, password, organization_number):
+def create_user(name, email, password, organization_number, db_path):
     # Create a new user in the database.
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO users (name, email, password, organization_number) VALUES (?, ?, ?, ?)",
@@ -52,10 +56,10 @@ def create_user(name, email, password, organization_number):
 
 
 
-def ensure_test_user(email, password):
+def ensure_test_user(email, password, db_path):
     # Ensure that a default test user exists in the database.
     # Create a default test user if it does not already exist.
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     cursor.execute("SELECT email FROM users WHERE email = ?", (email,))
@@ -71,30 +75,22 @@ def ensure_test_user(email, password):
     conn.commit()
     conn.close()
 
-def login_user(email, password):
+def login_user(email, password, db_path):
     # Authenticate a user based on email and password.
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, organization_number FROM users WHERE email = ? AND password = ?", (email, password))
     user = cursor.fetchone()
+    conn.commit()
     conn.close()
     return user # Returns None if no matching user is found
 
 
-def create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum):
-    # Create a new booking in the database.
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO bookings (name, email, organization_number, utbildning, antal, ort, lokal, datum) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, email, organization_number, utbildning, antal, ort, lokal, datum),
-    )
-    conn.commit()
-    conn.close()
 
-def create_databse():
-    
-        conn = sqlite3.connect('database.db') # Todo change to external database
+
+def create_database(db_path):
+        
+        conn = sqlite3.connect(db_path) 
         cursor = conn.cursor()
     
         # Create the 'bookings' table
