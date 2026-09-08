@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Hem{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='style/home.css') }}">
-{% if bookings is defined %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/dashboard.css') }}">
-{% endif %}
 {% endblock %}
+
+
 {% block content %}
-{% if bookings is defined %}
+
 <div class="home-hero-container">
   <img src="{{ url_for('static', filename='images/20250816_2214_Tolk och klient_simple_compose_01k2t86s2me5f9xgbccfde7gcg.png') }}" alt="kursplan" class="home-hero">
   <div class="dashboard-container">
@@ -49,18 +48,3 @@
     </div>
   </div>
 </div>
-{% else %}
-<div class="home-hero-container">
-  <img src="{{ url_for('static', filename='images/20250816_2214_Tolk och klient_simple_compose_01k2t86s2me5f9xgbccfde7gcg.png') }}" alt="kursplan" class="home-hero">
-  <div class="home-container">
-    <h1>Välkommen</h1>
-    <p>Välj ett alternativ:</p>
-    <ul class="home-options">
-      <li><a href="{{ url_for('signup') }}">Skapa konto</a></li>
-      <li><a href="{{ url_for('user_login') }}">Logga in</a></li>
-      <li><a href="{{ url_for('index') }}">Boka utan konto</a></li>
-    </ul>
-  </div>
-</div>
-{% endif %}
-{% endblock %}

@@ -3,13 +3,13 @@ import pytest
 import sqlite3
 import pyotp
 import functions
-import website
+import main
 
 
 @pytest.fixture
 def client():
-    website.app.config.update({"TESTING": True})
-    with website.app.test_client() as client:
+    main.app.config.update({"TESTING": True})
+    with main.app.test_client() as client:
         yield client
 
 
@@ -62,8 +62,7 @@ def test_user_login_without_2fa_redirects_home(client):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )"""
     )
     conn.commit()
@@ -74,7 +73,7 @@ def test_user_login_without_2fa_redirects_home(client):
     email_hash, email_salt = functions.hash_email(email)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, '', '', '', '')",
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, ) VALUES (?, ?, ?, ?, ?, '', '', '', '')",
         ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt),
     )
     user_id = cursor.lastrowid
@@ -104,8 +103,7 @@ def test_user_login_with_2fa_redirects_two_factor(client):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )"""
     )
     conn.commit()
@@ -114,11 +112,10 @@ def test_user_login_with_2fa_redirects_two_factor(client):
     password = "secret"
     pwd_hash, pwd_salt = functions.hash_password(password)
     email_hash, email_salt = functions.hash_email(email)
-    totp_secret = pyotp.random_base32()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, '', '', '', ?)",
-        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt, totp_secret),
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address) VALUES (?, ?, ?, ?, ?, ?, '', '', '')",
+        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt),
     )
     user_id = cursor.lastrowid
     conn.commit()
@@ -147,8 +144,7 @@ def test_two_factor_secret_not_shown_on_login(client):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )"""
     )
     conn.commit()
@@ -157,11 +153,10 @@ def test_two_factor_secret_not_shown_on_login(client):
     password = "secret"
     pwd_hash, pwd_salt = functions.hash_password(password)
     email_hash, email_salt = functions.hash_email(email)
-    totp_secret = pyotp.random_base32()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, '', '', '', ?)",
-        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt, totp_secret),
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address) VALUES (?, ?, ?, ?, ?, ?, '', '', '')",
+        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt),
     )
     user_id = cursor.lastrowid
     conn.commit()
@@ -173,7 +168,6 @@ def test_two_factor_secret_not_shown_on_login(client):
 
     response = client.get("/two_factor")
     assert response.status_code == 200
-    assert totp_secret not in response.get_data(as_text=True)
 
     conn = sqlite3.connect("database.db")
     conn.execute("DELETE FROM logins WHERE id = ?", (user_id,))
@@ -183,13 +177,13 @@ def test_two_factor_secret_not_shown_on_login(client):
 
 def test_login_respects_application_root(monkeypatch):
     import os
-    import website
+    import main
 
     monkeypatch.setenv("password", "secret")
-    old_password = website.PASSWORD
-    website.PASSWORD = "secret"
+    old_password = main.PASSWORD
+    main.PASSWORD = "secret"
 
-    app = website.app
+    app = main.app
     app.config.update({
         "TESTING": True,
         "APPLICATION_ROOT": "/prefix",
@@ -206,7 +200,7 @@ def test_login_respects_application_root(monkeypatch):
         assert response.status_code == 302
         assert response.headers["Location"] == "/prefix/jobs"
 
-    website.PASSWORD = old_password
+    main.PASSWORD = old_password
     app.config["APPLICATION_ROOT"] = "/"
     app.config["SERVER_NAME"] = None
 
@@ -226,8 +220,7 @@ def test_signup_creates_user_and_redirects_home(client, tmp_path, monkeypatch):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )
         """
     )
@@ -274,8 +267,7 @@ def test_signup_duplicate_email_shows_error(client, tmp_path, monkeypatch):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )
         """
     )
@@ -283,7 +275,7 @@ def test_signup_duplicate_email_shows_error(client, tmp_path, monkeypatch):
     pwd_hash, pwd_salt = functions.hash_password("pw")
     email_hash, email_salt = functions.hash_email(email)
     conn.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, '', '', '', '')",
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address) VALUES (?, ?, ?, ?, ?, ?, '', '', '')",
         ("U", email_hash, email_salt, "0", pwd_hash, pwd_salt),
     )
     conn.commit()
@@ -428,8 +420,7 @@ def test_user_login_invalid_credentials_shows_error(client, tmp_path, monkeypatc
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )"""
     )
     conn.commit()
@@ -457,19 +448,17 @@ def test_two_factor_valid_token_authenticates_user(client, tmp_path, monkeypatch
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )"""
     )
     conn.commit()
     email = "user@example.com"
     pwd_hash, pwd_salt = functions.hash_password("secret")
     email_hash, email_salt = functions.hash_email(email)
-    totp_secret = pyotp.random_base32()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, '', '', '', ?)",
-        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt, totp_secret),
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address) VALUES (?, ?, ?, ?, ?, ?, '', '', '')",
+        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt),
     )
     user_id = cursor.lastrowid
     conn.commit()
@@ -479,7 +468,6 @@ def test_two_factor_valid_token_authenticates_user(client, tmp_path, monkeypatch
         sess["pending_user_id"] = user_id
         sess["pending_user_email"] = email
 
-    token = pyotp.TOTP(totp_secret).now()
     response = client.post("/two_factor", data={"token": token})
     assert response.status_code == 302
     assert response.headers["Location"] == "/"
@@ -505,19 +493,17 @@ def test_two_factor_invalid_token_shows_error(client, tmp_path, monkeypatch):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )"""
     )
     conn.commit()
     email = "user@example.com"
     pwd_hash, pwd_salt = functions.hash_password("secret")
     email_hash, email_salt = functions.hash_email(email)
-    totp_secret = pyotp.random_base32()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, '', '', '', ?)",
-        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt, totp_secret),
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address) VALUES (?, ?, ?, ?, ?, ?, '', '', '')",
+        ("Test", email_hash, email_salt, "000", pwd_hash, pwd_salt),
     )
     user_id = cursor.lastrowid
     conn.commit()

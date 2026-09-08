@@ -55,7 +55,7 @@ def verify_email(email, stored_hash, salt):
     new_hash, _ = hash_email(email, salt)
     return new_hash == stored_hash
 
-def ensure_test_user(email="liam@localhost.com", password="Masbo124", totp=False):
+def ensure_test_user(email="liam@localhost.com", password="Masbo124"):
     # Ensure that a default test user exists in the database.
     # Create a default test user if it does not already exist.
     conn = sqlite3.connect('database.db')
@@ -65,17 +65,13 @@ def ensure_test_user(email="liam@localhost.com", password="Masbo124", totp=False
         if verify_email(email, email_hash, email_salt):
             conn.close()
             return
-    # Only generate a totp_secret when explicitly requested
-    if totp:
-        totp_secret = generate_secret_key()
-    else:
-        totp_secret = ""
+    
 
     pwd_hash, pwd_salt = hash_password(password)
     email_hash, email_salt = hash_email(email)
     cursor.execute(
-        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address, totp_secret) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("Test User", email_hash, email_salt, "0000000000", pwd_hash, pwd_salt, "", "", "", totp_secret),
+        "INSERT INTO logins (name, email, email_salt, phone, password_hash, salt, organization_number, billing_address, email_billing_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("Test User", email_hash, email_salt, "0000000000", pwd_hash, pwd_salt, "", "", ""),
     )
     conn.commit()
     conn.close()

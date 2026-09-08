@@ -45,8 +45,7 @@ def setup_logins_db(tmp_path):
             salt TEXT NOT NULL,
             organization_number TEXT,
             billing_address TEXT,
-            email_billing_address TEXT,
-            totp_secret TEXT
+            email_billing_address TEXT
         )
         """,
     )
@@ -107,26 +106,10 @@ def test_ensure_test_user_creates_single_entry(tmp_path, monkeypatch):
     functions.ensure_test_user()
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT email, email_salt, totp_secret FROM logins')
+    cursor.execute('SELECT email, email_salt FROM logins')
     rows = cursor.fetchall()
     conn.close()
     count = sum(
         1 for e_hash, e_salt, _ in rows if functions.verify_email('liam@localhost.com', e_hash, e_salt)
     )
     assert count == 1
-    assert all(totp == '' for _, _, totp in rows)
-
-
-def test_ensure_test_user_with_totp_creates_secret(tmp_path, monkeypatch):
-    setup_logins_db(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    functions.ensure_test_user(totp=True)
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT email, email_salt, totp_secret FROM logins')
-    row = cursor.fetchone()
-    conn.close()
-    assert row is not None
-    e_hash, e_salt, totp_secret = row
-    assert functions.verify_email('liam@localhost.com', e_hash, e_salt)
-    assert totp_secret != ''
