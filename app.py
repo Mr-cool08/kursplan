@@ -13,8 +13,8 @@ import subprocess
 import urllib.parse
 
 db_path = os.getenv("db_path")
-    if not db_path:
-        raise ValueError("Database path is not set in the .env file.")
+if not db_path:
+    raise ValueError("Database path is not set in the .env file.")
 
 load_dotenv()
 app = Flask(__name__)
