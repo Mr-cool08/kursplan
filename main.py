@@ -78,50 +78,8 @@ def signup():
     if request.method == 'POST':
         name = request.form['name']
         email = request.form['email']
-        phone = request.form['phone']
         password = request.form['password']
-        organization_number = request.form.get('organization_number', '')
-        billing_address = request.form.get('billing_address', '')
-        email_billing_address = request.form.get('email_billing_address', '')
-        pwd_hash, salt = functions.hash_password(password)
-        email_hash, email_salt = functions.hash_email(email)
-        enable_2fa = bool(request.form.get('enable_2fa'))
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT email, email_salt FROM logins")
-        for existing_hash, existing_salt in cursor.fetchall():
-            if functions.verify_email(email, existing_hash, existing_salt):
-                conn.close()
-                return render_template('signup.html', error='E-post används redan')
-        cursor.execute(
-            """
-            INSERT INTO logins (
-                name, email, email_salt, phone, password_hash, salt,
-                organization_number, billing_address, email_billing_address 
-            ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                name,
-                email_hash,
-                email_salt,
-                phone,
-                pwd_hash,
-                salt,
-                organization_number,
-                billing_address,
-                email_billing_address,
-            ),
-        )
-        user_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        if enable_2fa:
-            session['pending_user_id'] = user_id
-            session['pending_user_email'] = email
-            return redirect(url_for('two_factor'))
-        session['user_id'] = user_id
-        session['user_email'] = email
-        return redirect(url_for('home'))
+        
     return render_template('signup.html')
 
 
@@ -366,63 +324,16 @@ def page_not_found(e):
         404,
     )
 if __name__ == '__main__':
-    # Connect to the database and create the 'bookings' table if it doesn't exist
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
+    functions.create_databse()  # Ensure the database and tables are created before running the app
 
-    # Create the 'bookings' table if it doesn't exist
-    cursor.execute('''CREATE TABLE IF NOT EXISTS bookings
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    email TEXT NOT NULL,
-                    phone TEXT NOT NULL,
-                    language TEXT NOT NULL,
-                    time_start TEXT NOT NULL,
-                    time_end TEXT NOT NULL,
-                    organization_number TEXT,
-                    billing_address TEXT,
-                    email_billing_address TEXT,
-                    marking TEXT,
-                    avtalskund_marking TEXT,
-                    reference TEXT,
-                    status TEXT NOT NULL DEFAULT "pending")''')
 
-    # Ensure the status column exists for older databases
-    cursor.execute("PRAGMA table_info(bookings)")
-    columns = [info[1] for info in cursor.fetchall()]
-    if 'status' not in columns:
-        cursor.execute("ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
-
-    # Create the 'logins' table if it doesn't exist
-    cursor.execute('''CREATE TABLE IF NOT EXISTS logins
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    email TEXT NOT NULL UNIQUE,
-                    email_salt TEXT NOT NULL,
-                    phone TEXT NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    salt TEXT NOT NULL,
-                    organization_number TEXT,
-                    billing_address TEXT,
-                    email_billing_address TEXT)''')
-
-    cursor.execute("PRAGMA table_info(logins)")
-    login_columns = [info[1] for info in cursor.fetchall()]
-    extra_cols = [
-        'organization_number',
-        'billing_address',
-        'email_billing_address',
-        'email_salt'
-    ]
-    for col in extra_cols:
-        if col not in login_columns:
-            cursor.execute(f"ALTER TABLE logins ADD COLUMN {col} TEXT")
-
-    conn.commit()
-    conn.close()
 
     # Ensure a default test account exists for easier manual testing
-    functions.ensure_test_user()
+    email = os.getenv("test_email")
+    password = os.getenv("test_password")
+    functions.ensure_test_user(email=email, password=password)
 
     port = int(os.environ.get("PORT", 80))
-    app.run(port=port, host="0.0.0.0", debug=True)
+    host = os.environ.get("HOST", "0.0.0.0")
+    debug = os.environ.get("DEBUG", "false").lower() == "true"
+    app.run(port=port, host=host, debug=debug)
