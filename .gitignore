@@ -73,6 +73,10 @@ db.sqlite3-journal
 # Flask stuff:
 instance/
 
+# Local environment and application data
+.env
+database.db
+
 # Scrapy stuff:
 .scrapy
 

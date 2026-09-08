@@ -1,0 +1,53 @@
+name: Test Docker image
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    name: Build and smoke test Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./dockerfile
+          tags: kursplan:test
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        run: >-
+          docker run --detach --rm --name kursplan-test
+          --publish 8000:8000
+          --env db_path=/tmp/database.db
+          --env app_secret_key=ci-test-secret
+          kursplan:test
+
+      - name: Check health endpoint
+        run: >-
+          curl --fail --retry 10 --retry-delay 2 --retry-connrefused
+          http://127.0.0.1:8000/health
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs kursplan-test
+
+      - name: Stop container
+        if: always()
+        run: docker stop kursplan-test || true
