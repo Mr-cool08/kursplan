@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style/base.css') }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/25/25694.png" />
+    <title>{% block title %}{% endblock %}</title>
+    {% block head %}{% endblock %}
+</head>
+<body>
+
+
+    {% block content %}
+    {% endblock %}
+
+
+    <footer>
+        <hr>
+        <p>&copy; <span id="currentYear"></span> <a href="https://kursplan.se/">kursplan.se</a>. All rights reserved. Owner: Liam Suorsa.</p>
+    </footer>
+
+    <script>
+        // Get the current year
+        var year = new Date().getFullYear();
+        // Set the current year in the span element
+        document.getElementById("currentYear").innerHTML = year;
+    </script>
+    </div>
+</body>
+</html>

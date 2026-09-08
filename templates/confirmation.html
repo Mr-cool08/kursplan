@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}
+    Bokningsbekräftelse
+{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style/confirmation.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Bokningsbekräftelse</h1>
+    <div class="info">
+        <p><strong>Namn:</strong> {{ name }}</p>
+        <p>E-post: {{ email }}</p>
+        <p>Telefonnummer: {{ phone }}</p>
+        <p>Språk: {{ language }}</p>
+        <p>Starttid: {{ time_start }}</p>
+        <p>Sluttid: {{ time_end }}</p>
+        {% if organization_number %}
+            <p>Organisationsnummer: {{ organization_number }} </p>
+        {% endif %}
+        {% if billing_address %}
+        <p>Faktureringsadress: {{ billing_address }} </p>
+        {% endif %}
+        {% if email_billing_address %}
+        <p>E-post faktureringsadress: {{ email_billing_address }} </p>
+        {% endif %}
+        {% if reference %}
+        <p>Referens: {{ reference }} </p>
+        {% endif %}
+        <form method="post" action="#">
+            <input type="submit" value="Bekräfta" name="Bekräfta"/>
+        </form>
+    </div>
+</div>
+{% endblock %}
