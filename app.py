@@ -98,7 +98,7 @@ def dashboard():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint used by deployment platforms."""
-    return "OK", 200
+    return {"status": "ok"}, 200
 
 
 
