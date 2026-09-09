@@ -4,48 +4,75 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style/dashboard.css') }}">
 {% endblock %}
 
-
 {% block content %}
-
 <div class="home-hero-container">
   <img src="{{ url_for('static', filename='images/20250816_2214_Tolk och klient_simple_compose_01k2t86s2me5f9xgbccfde7gcg.png') }}" alt="kursplan" class="home-hero">
+
   <div class="dashboard-container">
-    <h1>Dina bokningar</h1>
+    <div class="dashboard-header">
+      <div>
+        <p class="dashboard-kicker">Välkommen</p>
+        <h1>{{ name }}</h1>
+      </div>
+      <a href="{{ url_for(request.blueprint + '.booking') }}" class="dashboard-button primary">
+        Gör ny bokning
+    </a>
+    </div>
+
+    <h2>Dina bokningar</h2>
+
     {% if bookings %}
     <div class="table-container">
       <table class="dashboard-table">
-        <tr>
-          <th>Utbildning</th>
-          <th>Starttid</th>
-          <th>Sluttid</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-        {% for b in bookings %}
-        <tr>
-          <td>{{ b[1] }}</td>
-          <td>{{ b[2] }}</td>
-          <td>{{ b[3] }}</td>
-          <td class="status status-{{ b[4] }}">{{ b[4] }}</td>
-          <td>
-            {% if b[4] == 'pending' %}
-            <form method="post" action="{{ url_for('cancel_booking', booking_id=b[0]) }}">
-              <button type="submit" class="cancel-button">Avbryt</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
+        <thead>
+          <tr>
+            <th>Utbildning</th>
+            <th>Antal</th>
+            <th>Ort</th>
+            <th>Datum</th>
+            <th>lokal</th>
+            <th>Status</th>
+            <th>Åtgärd</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in bookings %}
+          <tr>
+            <td>{{ b[4] }}</td>
+            <td>{{ b[5] }}</td>
+            <td>{{ b[6] }}</td>
+            <td>{{ b[8] }}</td>
+            <td>{{ b[7] }}</td>
+            <td>
+              {% if b[9] == 'pending' %}
+                <span class="status-pill pending">Väntar</span>
+              {% elif b[9] == 'accepted' %}
+                <span class="status-pill accepted">Accepterad</span>
+              {% else %}
+                <span class="status-pill cancelled">Avbruten</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if b[9] == 'pending' %}
+              <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
+                <button type="submit" class="cancel-button">Avbryt</button>
+              </form>
+              {% else %}
+              <span class="table-action-muted">-</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
       </table>
     </div>
     {% else %}
-    <p>Du har inga bokningar.</p>
+    <p class="empty-state">Du har inga bokningar ännu.</p>
     {% endif %}
+
     <div class="dashboard-actions">
-      <a href="{{ url_for('booking') }}" class="dashboard-button">Gör ny bokning</a>
-      <a href="{{ url_for('logout') }}" class="dashboard-button">Logga ut</a>
+      <a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a>
     </div>
   </div>
 </div>
-
 {% endblock %}

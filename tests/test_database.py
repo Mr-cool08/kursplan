@@ -42,9 +42,13 @@ def test_create_user(db_path):
     email = "test@user.se"
     password = "testpassword"
     organization_number = "1234567890"
-    user_id = database.create_user(name, email, password, organization_number, db_path)
-    assert isinstance(user_id, tuple)
-    assert len(user_id) == 4  # Ensure the returned tuple has the correct number of elements
+    user = database.create_user(
+        name, email, password, organization_number, "user", db_path
+    )
+    assert isinstance(user, tuple)
+    assert len(user) == 4
+    assert user[1] == name
+    assert user[3] == email
 
 
 def test_check_user_exists(db_path):
@@ -56,7 +60,9 @@ def test_check_user_exists(db_path):
     email = "test@user.se"
     password = "testpassword"
     organization_number = "1234567890"
-    user_id = database.create_user(name, email, password, organization_number, db_path)
+    database.create_user(
+        name, email, password, organization_number, "user", db_path
+    )
     exists = database.check_user_exists(email, db_path)
     assert exists is True
     
@@ -81,7 +87,9 @@ def test_create_booking_and_user(db_path):
     
     booking_id = database.create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path)
     assert isinstance(booking_id, int)
-    created_user = database.create_user(name, email, "testpassword", organization_number, db_path)
+    created_user = database.create_user(
+        name, email, "testpassword", organization_number, "user", db_path
+    )
     assert isinstance(created_user, tuple)
     
 def test_create_database(db_path):

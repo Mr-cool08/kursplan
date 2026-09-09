@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, session, redirect, url_for
+from flask import Flask, render_template, request, session, redirect, url_for, Blueprint
 import sqlite3
 from datetime import datetime, timedelta
 import smtplib
@@ -11,6 +11,8 @@ import database
 from itertools import combinations
 import subprocess
 import urllib.parse
+from users import user_page
+from admin import admin_page
 
 db_path = os.getenv("db_path")
 if not db_path:
@@ -20,80 +22,21 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
 
-utbildningar = [
-    "HLR",
-    "Heta arbeten",
-    "Liftutbildning",
-    "Ställningsutbildning",
-    "Säkra lyft",
-    "Arbetsmiljöutbildning",
-    "Första hjälpen",
-    "Brandskyddsutbildning"
-]
+app.register_blueprint(user_page)
+app.register_blueprint(admin_page)
+
 
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('index'))
-
-
-@app.route('/')
-def index():
-    return render_template('index.html')
+    return redirect(url_for('user_page.index'))  
 
 
 
 
-@app.route('/signup', methods=['GET', 'POST'])
-def signup():
-    if request.method == 'POST':
-        name = request.form['name']
-        email = request.form['email']
-        password = request.form['password']
-        organization_number = request.form['organization_number']
-        if database.check_user_exists(email, db_path):
-            return render_template('signup.html', error='A user with this email already exists.')
-        user = database.create_user(name, email, password, organization_number, db_path)
-        session['user_id'] = user[0]
-        session['user_name'] = user[1]
-        session['organization_number'] = user[2]
-        session['user_email'] = user[3]
-        return redirect(url_for('login'))
-    else:
-        return render_template('signup.html')
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'GET':
-        if 'user_id' in session:
-            
-            return redirect(url_for('dashboard'))
-    elif request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        if not email or not password:
-            return render_template('login.html', error='Please enter both email and password.')
-        user = database.login_user(email, password, db_path)
-        if user:
-            session['user_id'] = user[0]
-            session['user_name'] = user[1]
-            session['organization_number'] = user[2]
-            session['user_email'] = email
-            return redirect(url_for('dashboard'))
 
-        return render_template('login.html', error='Invalid email or password.')
-    return render_template('login.html')
 
-@app.route('/dashboard')
-def dashboard():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    name = session.get('user_name')
-    organization_number = session.get('organization_number')
-    user_id = session.get('user_id')
-    
-    
-    return render_template('dashboard.html', name=name, organization_number=organization_number)
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -102,28 +45,6 @@ def health():
 
 
 
-@app.route('/booking', methods=['GET', 'POST'])
-def booking():
-    if request.method == 'POST':
-        if 'user_id' not in session:
-            return redirect(url_for('login'))
-        name = session.get('user_name')
-        email = session.get('user_email')
-        organization_number = session.get('organization_number')
-        utbildning = request.form['utbildning']
-        antal = request.form['antal']
-        ort = request.form['ort']
-        lokal = request.form['lokal']
-        if lokal == 'Egen':
-            lokal = request.form['adress']
-        datum = request.form['datum']
-        database.create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path)
-        return redirect(url_for('dashboard'))
-    if request.method == 'GET':
-        if 'user_id' not in session:
-            return redirect(url_for('login'))
-        
-        return render_template('book.html', utbildningar=utbildningar)
 
 
 @app.route('/fix_later') # The page to display the list of jobs
@@ -251,20 +172,7 @@ def accept_job(job_id):
     return 'Job accepted and email sent'
 
 
-@app.route('/cancel_booking/<int:booking_id>', methods=['POST'])
-def cancel_booking(booking_id):
-    if not session.get('user_id'):
-        return redirect(url_for('user_login'))
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    user_email = session.get('user_email')
-    cursor.execute(
-        "UPDATE bookings SET status='cancelled' WHERE id=? AND email=? AND status='pending'",
-        (booking_id, user_email),
-    )
-    conn.commit()
-    conn.close()
-    return redirect(url_for('home'))
+
 
 @app.route('/submit', methods=['GET', 'POST'])
 def submit():

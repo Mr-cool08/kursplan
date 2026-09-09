@@ -8,7 +8,7 @@
 {% block content %}
 <h1>Bokning av utbildning</h1>
     
-<form action="{{ url_for('booking') }}" method="post">
+<form action="{{ url_for('user_page.booking') }}" method="post">
 
 
     <label for="datum">Datum:</label>
@@ -32,7 +32,7 @@
     <select id="lokal" name="lokal" required>
         <option value="" disabled selected hidden>Välj lokal</option>
         <option value="Egen">Egen lokal</option>
-        <option value="Vi bokar">Ni bokar</option>
+        <option value="JK bokar">Ni bokar</option>
     </select><br><br>
 
     <div id="adress-container" hidden>

@@ -2,7 +2,7 @@ import sqlite3
 import secrets
 import os
 import hashlib
-
+import time
 
 def generate_secret_key():
     # Generate a random 32-byte key using secrets module.
@@ -39,13 +39,13 @@ def check_user_exists(email, db_path):
 
 
 
-def create_user(name, email, password, organization_number, db_path):
+def create_user(name, email, password, organization_number, role, db_path):
     # Create a new user in the database.
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO users (name, email, password, organization_number) VALUES (?, ?, ?, ?)",
-        (name, email, password, organization_number),
+        "INSERT INTO users (name, email, password, organization_number, role) VALUES (?, ?, ?, ?, ?)",
+        (name, email, password, organization_number, role),
     )
     cursor.execute("SELECT id, name, organization_number, email FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
@@ -53,8 +53,25 @@ def create_user(name, email, password, organization_number, db_path):
     conn.close()
     return user
 
+def update_status(booking_id, status, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE bookings SET status = ? WHERE id = ?",
+        (status, booking_id)
+    )
+    conn.commit()
+    conn.close()
 
-
+def remove_booking(booking_id, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    id = booking_id
+    cursor.execute("DELETE FROM bookings WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    
+    
 
 def ensure_test_user(email, password, db_path):
     # Ensure that a default test user exists in the database.
@@ -69,23 +86,49 @@ def ensure_test_user(email, password, db_path):
 
 
     cursor.execute(
-        "INSERT INTO users (name, email, password, organization_number) VALUES (?, ?, ?, ?)",
-        ("test user", email, password, "0000000000"),
+        "INSERT INTO users (name, email, password, organization_number, role) VALUES (?, ?, ?, ?, ?)",
+        ("Admin", email, password, "0000000000", "admin"),
     )
     conn.commit()
     conn.close()
 
-def login_user(email, password, db_path):
+
+
+
+def login_user(email, password, role, db_path):
     # Authenticate a user based on email and password.
+    print(email, password, role)
+    print("EMAIL:", repr(email))
+    print("PASSWORD:", repr(password))
+    print("ROLE:", repr(role))
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, organization_number FROM users WHERE email = ? AND password = ?", (email, password))
+    cursor.execute("SELECT id, name, organization_number FROM users WHERE email = ? AND password = ? AND role = ?", (email, password, role))
     user = cursor.fetchone()
+    print(user)
     conn.commit()
     conn.close()
     return user # Returns None if no matching user is found
 
+def get_booking_by_name(name, db_path):
+    # Retrieve a booking from the database based on its ID.
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM bookings WHERE name = ?", (name,))
+    booking = cursor.fetchall()
+    conn.commit()
+    conn.close()
+    return booking  # Returns None if no matching booking is found
 
+def get_all_bookings(db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM bookings")
+    bookings = cursor.fetchall()
+    print(bookings)
+    conn.close()
+
+    return bookings
 
 
 def create_database(db_path):
@@ -124,6 +167,7 @@ def create_database(db_path):
                                 organization_number TEXT,
                                 email TEXT NOT NULL UNIQUE,
                                 password TEXT NOT NULL,
+                                role TEXT,
                                 status TEXT NOT NULL DEFAULT "pending")''')
         conn.commit()
         conn.close()
