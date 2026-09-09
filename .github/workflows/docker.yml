@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   docker:
-    name: Build and smoke test Docker image
+    name: Build test Docker image
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
