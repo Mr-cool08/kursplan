@@ -2,7 +2,7 @@ from flask import render_template, request, session, redirect, url_for, Blueprin
 from functools import wraps
 import database
 import os
-
+import gen_func
 
 db_path = os.getenv("db_path")
 
@@ -33,15 +33,40 @@ def admin_required(func):
     return wrapper
 
 
-@admin_page.route("/")
+@admin_page.route("/", methods=["GET"])
 @admin_required
 def dashboard():
     bookings = database.get_all_bookings(db_path)
     print(bookings)
     return render_template(
-        "dashboard.html",
+        "admin_dashboard.html",
         bookings=bookings
     )
+
+
+@admin_page.route("/bookings", methods=["POST"])
+@admin_required
+def book():
+    booking_ids = []
+    for booking_id in request.form.getlist("booking_ids"):
+        try:
+            booking_ids.append(int(booking_id))
+        except ValueError:
+            continue
+
+    booking_date = request.form.get("date", "").strip()
+    ort = request.form.get("ort", "").strip()
+
+    if not booking_ids or not booking_date or not ort:
+        print("Missing data")
+        return redirect(url_for("admin_page.dashboard"))
+
+    database.book_bookings(booking_ids, booking_date, ort, db_path)
+    for booking_id in booking_ids:
+        email = database.get_email_by_booking_id(booking_id, db_path)
+        utbildning = database.get_utbildning_by_booking_id(booking_id, db_path)
+        gen_func.send_booked_mail(email, booking_date, ort, booking_id, utbildning)
+    return redirect(url_for("admin_page.dashboard"))
 
 
 @admin_page.route("/login", methods=["GET", "POST"])

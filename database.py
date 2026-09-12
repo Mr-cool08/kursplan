@@ -63,6 +63,26 @@ def update_status(booking_id, status, db_path):
     conn.commit()
     conn.close()
 
+def get_email_by_booking_id(booking_id, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT email FROM bookings WHERE id = ?", (booking_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def book_bookings(booking_ids, booking_date, ort, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    placeholders = ",".join("?" for _ in booking_ids)
+    cursor.execute(
+        f"UPDATE bookings SET datum = ?, ort = ?, status = 'accepted' WHERE status = 'pending' AND id IN ({placeholders})",
+        (booking_date, ort, *booking_ids)
+    )
+    conn.commit()
+    conn.close()
+
 def remove_booking(booking_id, db_path):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -72,6 +92,38 @@ def remove_booking(booking_id, db_path):
     conn.close()
     
     
+def get_utbildning_by_booking_id(booking_id, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT utbildning FROM bookings WHERE id = ?", (booking_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_booking_by_id(booking_id, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row if row else None
+
+def get_bookings_by_email(email, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM bookings WHERE email = ?", (email,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows if rows else None
+
+def get_bookings_by_status(status, db_path):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM bookings WHERE status = ?", (status,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows if rows else None
+
 
 def ensure_test_user(email, password, db_path):
     # Ensure that a default test user exists in the database.
@@ -123,7 +175,7 @@ def get_booking_by_name(name, db_path):
 def get_all_bookings(db_path):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM bookings")
+    cursor.execute("SELECT * FROM bookings ORDER BY utbildning COLLATE NOCASE ASC, id ASC")
     bookings = cursor.fetchall()
     print(bookings)
     conn.close()

@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Hem{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="home-hero-container">
+  <img src="{{ url_for('static', filename='images/20250816_2214_Tolk och klient_simple_compose_01k2t86s2me5f9xgbccfde7gcg.png') }}" alt="kursplan" class="home-hero">
+
+  <div class="dashboard-container">
+    <div class="dashboard-header">
+      <div>
+        <p class="dashboard-kicker">Välkommen</p>
+        <h1>{{ name }}</h1>
+      </div>
+      <button type="button" class="book-button" onclick="openBookDialog()">Boka</button>
+    </div>
+
+    <h2>Bokningar</h2>
+
+    {% if bookings %}
+    <div class="booking-toolbar">
+      <div class="booking-filters" aria-label="Visa bokningar">
+        <label><input type="checkbox" id="show-accepted" onchange="filterBookings()"> Visa Bokade</label>
+        <label><input type="checkbox" id="show-cancelled" onchange="filterBookings()"> Visa avbrutna</label>
+      </div>
+     
+    </div>
+    <div class="table-container">
+      <table class="dashboard-table">
+        <thead>
+          <tr>
+            <th>Markera</th>
+            <th>Utbildning</th>
+            <th>Antal</th>
+            <th>Ort</th>
+            <th>Datum</th>
+            <th>lokal</th>
+            <th>Status</th>
+            <th>Åtgärd</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in bookings %}
+          <tr data-status="{{ b[9] }}">
+            <td>
+              <input type="checkbox" name="booking_ids" value="{{ b[0] }}" data-name="{{ b[1] }}" data-email="{{ b[2] }}" aria-label="Markera bokning {{ b[0] }}"{% if b[9] != 'pending' %} disabled{% endif %}>
+            </td>
+            <td>{{ b[4] }}</td>
+            <td>{{ b[5] }}</td>
+            <td>{{ b[6] }}</td>
+            <td>{{ b[8] }}</td>
+            <td>{{ b[7] }}</td>
+            <td>
+              {% if b[9] == 'pending' %}
+                <span class="status-pill pending">Väntar</span>
+              {% elif b[9] == 'accepted' %}
+                <span class="status-pill accepted">Bokad</span>
+              {% else %}
+                <span class="status-pill cancelled">Avbruten</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if b[9] == 'pending' %}
+              <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
+                <button type="submit" class="cancel-button">Avbryt</button>
+              </form>
+              {% else %}
+              <span class="table-action-muted">-</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <dialog id="book-dialog" class="booking-dialog">
+      <form method="post" action="{{ url_for('admin_page.book') }}">
+        <div class="booking-dialog-header">
+          <h3>Boka valda utbildningar</h3>
+          <button type="button" class="dialog-close" onclick="this.closest('dialog').close()" aria-label="Stäng">&times;</button>
+        </div>
+        <div id="selected-contacts"></div>
+        <div id="selected-booking-ids"></div>
+        <label for="booking-date">Datum</label>
+        <input type="date" id="booking-date" name="date" required>
+        <label for="booking-ort">Ort</label>
+        <input type="text" id="booking-ort" name="ort" required>
+        <div class="booking-dialog-actions">
+          <button type="button" class="dashboard-button secondary" onclick="this.closest('dialog').close()">Avbryt</button>
+          <button type="submit" class="dashboard-button primary">Book</button>
+        </div>
+      </form>
+    </dialog>
+    {% else %}
+    <p class="empty-state">Du har inga bokningar ännu.</p>
+    {% endif %}
+
+    <div class="dashboard-actions">
+      <a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a>
+    </div>
+  </div>
+</div>
+<script>
+  function openBookDialog() {
+    const selected = Array.from(document.querySelectorAll('input[name="booking_ids"]:checked'));
+    if (!selected.length) {
+      return;
+    }
+
+    const contacts = document.getElementById('selected-contacts');
+    contacts.replaceChildren();
+    selected.forEach((booking) => {
+      const contact = document.createElement('p');
+      const name = document.createElement('strong');
+      const email = document.createElement('a');
+      name.textContent = booking.dataset.name;
+      email.textContent = booking.dataset.email;
+      email.href = `mailto:${booking.dataset.email}`;
+      contact.append(name, document.createElement('br'), email);
+      contacts.appendChild(contact);
+    });
+
+    const bookingIds = document.getElementById('selected-booking-ids');
+    bookingIds.replaceChildren();
+    selected.forEach((booking) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'booking_ids';
+      input.value = booking.value;
+      bookingIds.appendChild(input);
+    });
+    document.getElementById('booking-ort').value = selected[0].closest('tr').querySelector('td:nth-child(4)').textContent.trim();
+    document.getElementById('book-dialog').showModal();
+  }
+
+  function filterBookings() {
+    const acceptedToggle = document.getElementById('show-accepted');
+    const cancelledToggle = document.getElementById('show-cancelled');
+    if (!acceptedToggle || !cancelledToggle) {
+      return;
+    }
+
+    const showAccepted = acceptedToggle.checked;
+    const showCancelled = cancelledToggle.checked;
+
+    document.querySelectorAll('.dashboard-table tbody tr').forEach((row) => {
+      const status = row.dataset.status;
+      row.hidden = (status === 'accepted' && !showAccepted) || (status === 'cancelled' && !showCancelled);
+    });
+  }
+
+  filterBookings();
+</script>
+{% endblock %}
