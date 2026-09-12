@@ -1,1 +1,108 @@
-coming soon
+Copyright © 2026 Järnvägskonsulterna i Norden AB
+All rights reserved.
+
+Proprietary Software License
+
+This software, including all source code, documentation, database structures, designs, interfaces, and related materials (the “Software”), is the property of Järnvägskonsulterna i Norden AB, subject to the developer rights expressly stated in Section 6 below.
+
+1. Free use of Kursplan.se
+
+Kursplan.se is provided as a free-to-use software service.
+
+Users may access and use the publicly available functionality of Kursplan.se without paying a license fee, subject to the applicable terms of use and any technical or functional limitations of the service.
+
+The fact that Kursplan.se is provided free of charge does not mean that the Software is open source, public domain, or freely licensed.
+
+No ownership rights, source code rights, redistribution rights, modification rights, or other intellectual property rights are granted merely because the service is available free of charge.
+
+Järnvägskonsulterna i Norden AB reserves the right to modify the functionality of Kursplan.se and may introduce optional paid services, additional functionality, commercial integrations or other paid offerings in the future.
+
+2. Restrictions
+
+Unless prior written permission has been obtained from Järnvägskonsulterna i Norden AB, you may not:
+
+* copy or reproduce the Software;
+* modify, adapt, translate, or create derivative works from the Software;
+* distribute, publish, sublicense, sell, rent, lease, or otherwise make the Software available to any third party;
+* use the Software, or any substantial part of it, in another commercial or non-commercial product or service;
+* reverse engineer, decompile, or otherwise attempt to extract or reuse protected parts of the Software;
+* remove or alter copyright notices, ownership information, or other proprietary notices.
+
+3. Authorized access
+
+Access to the source code does not constitute permission to use, copy, modify, or distribute the Software.
+
+Employees, contractors, consultants, and other authorized persons may use the Software only to the extent necessary for work explicitly authorized by Järnvägskonsulterna i Norden AB, except for the rights expressly granted to the developer under Section 6.
+
+4. Third-party components
+
+Third-party libraries, frameworks, packages, and other dependencies included with or used by the Software remain subject to their respective licenses.
+
+This license does not replace or restrict rights granted under applicable third-party licenses.
+
+5. Ownership
+
+All intellectual property rights in Kursplan.se and the Software belong to Järnvägskonsulterna i Norden AB unless otherwise agreed in writing.
+
+No rights or licenses are granted by implication.
+
+The availability of Kursplan.se free of charge does not affect the ownership of the Software or the intellectual property rights associated with it.
+
+The developer rights specified in Section 6 constitute an express exception to this section and do not transfer ownership of Kursplan.se or the Software to the developer.
+
+6. Developer reuse rights
+
+Notwithstanding the restrictions and ownership provisions above, Liam Suorsa, as developer of the Software, is granted a perpetual, worldwide, royalty-free and non-exclusive right to reuse, copy, modify, adapt and incorporate source code, code fragments, components, modules, functions, technical solutions, programming concepts and general know-how developed in connection with Kursplan.se in other projects.
+
+This right applies to both commercial and non-commercial projects, provided that such use does not directly compete with Kursplan.se.
+
+For the purposes of this license, a project shall be considered to directly compete with Kursplan.se if its primary purpose and functionality are substantially similar to Kursplan.se and it is offered to the same or substantially similar target market as an alternative to Kursplan.se.
+
+The developer may therefore reuse generic or generally applicable parts of the Software, including but not limited to:
+
+* authentication and authorization functionality;
+* database functions and structures of a general nature;
+* user interface components;
+* API integrations;
+* administrative functionality;
+* booking and form functionality;
+* utility functions and helper modules;
+* infrastructure, deployment and configuration solutions;
+* programming patterns, architecture and technical methods.
+
+The developer’s reuse rights do not include the right to use or disclose:
+
+* confidential information belonging to Järnvägskonsulterna i Norden AB;
+* customer or user data originating from Kursplan.se;
+* personal data processed through Kursplan.se;
+* customer-specific confidential material;
+* passwords, API keys, access tokens or other credentials;
+* the Kursplan.se name, trademark, logo or other branding in a manner suggesting that another project is Kursplan.se or is endorsed by Kursplan.se.
+
+The developer may create, license, sell, distribute or otherwise commercially exploit projects containing permitted reused code, provided that the resulting project does not directly compete with Kursplan.se as defined above.
+
+These developer rights shall survive termination of employment, engagement, ownership interest or other relationship between Liam Suorsa and Järnvägskonsulterna i Norden AB, unless otherwise agreed in writing by Liam Suorsa and Järnvägskonsulterna i Norden AB.
+
+7. Availability and changes
+
+Because Kursplan.se is provided free of charge, Järnvägskonsulterna i Norden AB does not guarantee continuous availability, uninterrupted operation, permanent storage, continued development or the continued availability of any particular function.
+
+Järnvägskonsulterna i Norden AB may modify, suspend or discontinue all or parts of Kursplan.se at any time.
+
+Reasonable efforts may be made to preserve service continuity, but no service level is guaranteed unless separately agreed in writing.
+
+8. Disclaimer
+
+The Software and Kursplan.se are provided “as is” and “as available”, without warranties of any kind, express or implied, to the maximum extent permitted by applicable law.
+
+Järnvägskonsulterna i Norden AB shall not be liable for any direct, indirect, incidental, consequential or other damages arising from use of, inability to use, or reliance on Kursplan.se or the Software, except where liability cannot legally be excluded.
+
+9. Permission requests
+
+Requests for permission to use, reproduce, modify, distribute or license the Software outside the rights expressly granted under this license must be approved in writing by Järnvägskonsulterna i Norden AB.
+
+⸻
+
+Kursplan.se
+Järnvägskonsulterna i Norden AB
+Sweden
