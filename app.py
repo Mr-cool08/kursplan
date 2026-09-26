@@ -6,6 +6,7 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+load_dotenv()
 import time
 import database
 from itertools import combinations
@@ -21,7 +22,6 @@ db_path = os.getenv("db_path")
 if not db_path:
     raise ValueError("Database path is not set in the .env file.")
 
-load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
 

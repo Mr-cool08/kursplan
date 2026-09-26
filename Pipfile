@@ -8,6 +8,7 @@ flask = "*"
 python-dotenv = "*"
 datetime = "*"
 pytest = "*"
+psycopg = {extras = ["binary"], version = "*"}
 
 [dev-packages]
 
