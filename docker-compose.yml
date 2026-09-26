@@ -48,7 +48,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${db_password:-password}
     ports:
-      - "${db_port:-54326}:54326"
+      - "${db_port:-54326}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
