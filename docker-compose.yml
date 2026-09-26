@@ -3,17 +3,23 @@ services:
     build:
       context: .
       dockerfile: dockerfile
+
     env_file:
       - .env
+
     environment:
-      db_path: db_path: postgresql://postgres:${db_password:-password}@db:5432/postgres
+      db_path: postgresql://postgres:${db_password:-password}@db:5432/postgres
       app_port: 8000
+
     depends_on:
       db:
         condition: service_healthy
+
     ports:
       - "${app_port:-8000}:8000"
+
     restart: unless-stopped
+
     healthcheck:
       test:
         - CMD
@@ -21,50 +27,60 @@ services:
         - -c
         - >-
           import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:${app_port:-8000}/health')
+          urllib.request.urlopen('http://127.0.0.1:8000/health')
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
     develop:
-        watch:
-          - action: rebuild
-            path: .
-            ignore:
-              - __pycache__/
-              - .git/
-              - .venv/
+      watch:
+        - action: rebuild
+          path: .
+          ignore:
+            - __pycache__/
+            - .git/
+            - .venv/
+
     networks:
       - db
       - Kursplan
 
+
   db:
     image: postgres:18
     container_name: postgres-${environment:-dev}
+
     environment:
       POSTGRES_PASSWORD: ${db_password:-password}
+
     ports:
       - "${db_port:-54326}:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
+
     networks:
       - db
-  
+
 
 networks:
   Kursplan:
     name: Kursplan
     driver: bridge
     external: true
+
   db:
     name: db
     driver: bridge
     external: false
+
 
 volumes:
   postgres_data:
