@@ -37,5 +37,18 @@ services:
           - action: rebuild
             path: requirements.txt
 
+  db:
+    image: postgres:18
+    container_name: postgres-${environment:-dev}
+    environment:
+      POSTGRES_PASSWORD: ${db_password:-password}
+    ports:
+      - "${db_port:-54326}:54326"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+
+
 volumes:
   database-data:
+  postgres_data:

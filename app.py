@@ -14,6 +14,9 @@ import urllib.parse
 from users import user_page
 from admin import admin_page
 
+
+
+
 db_path = os.getenv("db_path")
 if not db_path:
     raise ValueError("Database path is not set in the .env file.")
@@ -25,7 +28,11 @@ app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env
 app.register_blueprint(user_page)
 app.register_blueprint(admin_page)
 
-
+environment = os.getenv("environment", "prod")
+if environment == "dev":
+    debug = True
+else:
+    debug = False
 @app.route('/logout')
 def logout():
     session.clear()
@@ -270,5 +277,4 @@ if __name__ == '__main__':
 
     port = int(os.environ.get("app_port", 80))
     host = os.environ.get("app_host", "0.0.0.0")
-    debug = os.environ.get("app_debug", "False") == "True" or "true"
     app.run(port=port, host=host, debug=debug, use_reloader=False)
