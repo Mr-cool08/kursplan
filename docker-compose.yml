@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     environment:
-      db_path: postgresql://postgres:${db_password:-password}@db:${db_port:-54326}/postgres
+      db_path: db_path: postgresql://postgres:${db_password:-password}@db:5432/postgres
       app_port: 8000
     depends_on:
       db:
@@ -30,14 +30,10 @@ services:
         watch:
           - action: rebuild
             path: .
-            target: /app
             ignore:
               - __pycache__/
               - .git/
               - .venv/
-
-          - action: rebuild
-            path: requirements.txt
     networks:
       - db
       - Kursplan
@@ -61,7 +57,7 @@ services:
   
 
 networks:
-  default:
+  Kursplan:
     name: Kursplan
     driver: bridge
     external: true
