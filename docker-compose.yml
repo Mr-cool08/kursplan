@@ -24,6 +24,18 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    develop:
+        watch:
+          - action: sync
+            path: .
+            target: /app
+            ignore:
+              - __pycache__/
+              - .git/
+              - .venv/
+
+          - action: rebuild
+            path: requirements.txt
 
 volumes:
   database-data:
