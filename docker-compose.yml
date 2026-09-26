@@ -38,6 +38,9 @@ services:
 
           - action: rebuild
             path: requirements.txt
+    networks:
+      - db
+      - Kursplan
 
   db:
     image: postgres:18
@@ -53,8 +56,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - db
+  
 
-
+networks:
+  default:
+    name: Kursplan
+    driver: bridge
+    external: true
+  db:
+    name: db
+    driver: bridge
+    external: false
 
 volumes:
   postgres_data:
