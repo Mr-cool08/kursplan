@@ -3,3 +3,4 @@ python-dotenv
 datetime
 pytest
 psycopg[binary]>=3.2,<4
+pytest-xdist
