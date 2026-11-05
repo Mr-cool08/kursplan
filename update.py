@@ -8,6 +8,7 @@ def update():
     if not os.path.exists("venv"):
         subprocess.run(["python3", "-m", "venv", "venv"], check=True) #python3 -m venv venv
     python = "venv/bin/python"
+    subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True) # python -m pip install --upgrade pip
     subprocess.run([python, "-m", "pip", "install", "-r", "requirements.txt"], check=True) # python -m pip install -r requirements.txt
     subprocess.run([python, "-m", "pytest", "-n", "auto", "--maxfail=1"], check=True) # python -m pytest -n auto --maxfail=1
     subprocess.run(["docker", "compose", "pull"], check=True) # docker compose pull
