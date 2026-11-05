@@ -8,7 +8,7 @@ load_dotenv()
 def is_port_available(port):
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('localhost', port)) != 0
+        return s.connect_ex(('127.0.0.1', port)) != 0
 def before_update():
     #Check if ENV exists
     if not os.path.exists(".env"):
@@ -25,7 +25,7 @@ def before_update():
         print("Error: app.py file not found. Please create a app.py file before updating.")
         sys.exit(1)
     #check if port is available
-    if not is_port_available(os.getenv("app_port", 80)):
+    if not is_port_available(int(os.getenv("app_port", 80))):
         print("Error: Port " + str(os.getenv("app_port", 80)) + " is not available. Please free the port before updating.")
         sys.exit(1)
 def update():
