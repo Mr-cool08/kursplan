@@ -31,12 +31,38 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Create CI Docker network
+        run: docker network create kursplan-ci
+
+      - name: Start PostgreSQL
+        run: >-
+          docker run --detach --name kursplan-db-test
+          --network kursplan-ci
+          --env POSTGRES_PASSWORD=ci-test-password
+          --env POSTGRES_DB=postgres
+          postgres:18
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec kursplan-db-test pg_isready -U postgres -d postgres; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs kursplan-db-test
+          exit 1
+
       - name: Start container
         run: >-
           docker run --detach --name kursplan-test
+          --network kursplan-ci
           --publish 8000:8000
-          --env db_path=/tmp/database.db
+          --env db_path=postgresql://postgres:ci-test-password@kursplan-db-test:5432/postgres
+          --env app_port=8000
           --env app_secret_key=ci-test-secret
+          --env test_email=ci@example.com
+          --env test_password=ci-test-password
           kursplan:test
       - name: Check health endpoint
         run: >-
@@ -52,9 +78,11 @@ jobs:
           docker ps -a
           docker inspect kursplan-test || true
           docker logs kursplan-test || true
+          docker logs kursplan-db-test || true
 
-      - name: Stop container
+      - name: Remove test containers and network
         if: always()
         run: |
-          docker stop kursplan-test || true
-          docker rm kursplan-test || true
+          docker rm --force kursplan-test || true
+          docker rm --force kursplan-db-test || true
+          docker network rm kursplan-ci || true
