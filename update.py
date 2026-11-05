@@ -1,8 +1,33 @@
 import os
 import subprocess
 import sys
+from dotenv import load_dotenv
 
 
+load_dotenv()
+def is_port_available(port):
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) != 0
+def before_update():
+    #Check if ENV exists
+    if not os.path.exists(".env"):
+        print("Error: .env file not found. Please create a .env file before updating.")
+        sys.exit(1)
+    #Check if requirements.txt exists
+    if not os.path.exists("requirements.txt"):
+        print("Error: requirements.txt file not found. Please create a requirements.txt file before updating.")
+        sys.exit(1)
+    if not os.path.exists("docker-compose.yml"):
+        print("Error: docker-compose.yml file not found. Please create a docker-compose.yml file before updating.")
+        sys.exit(1)
+    if not os.path.exists("app.py"):
+        print("Error: app.py file not found. Please create a app.py file before updating.")
+        sys.exit(1)
+    #check if port is available
+    if not is_port_available(load_dotenv().get("app_port", 80)):
+        print("Error: Port " + str(load_dotenv().get("app_port", 80)) + " is not available. Please free the port before updating.")
+        sys.exit(1)
 def update():
     subprocess.run(["git", "pull"], check=True) #git pull
     if not os.path.exists("venv"):
@@ -21,4 +46,5 @@ def update():
     
     
 if __name__ == "__main__":
+    before_update()
     update()
