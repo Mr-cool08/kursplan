@@ -310,3 +310,4 @@ $RECYCLE.BIN/
 *.db
 .dccache
 .env
+settings.json
