@@ -6,9 +6,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 def is_port_available(port):
+    from http.client import HTTPConnection, HTTPException
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('127.0.0.1', port)) != 0
+        s.settimeout(1)
+        if s.connect_ex(('127.0.0.1', port)) != 0:
+            return True
+
+    connection = HTTPConnection('127.0.0.1', port, timeout=1)
+    try:
+        connection.request('GET', '/')
+        response = connection.getresponse()
+        return response.status == 200 and b'https://kursplan.se/' in response.read(65536)
+    except (OSError, HTTPException):
+        return False
+    finally:
+        connection.close()
+    
 def before_update():
     #Check if ENV exists
     if not os.path.exists(".env"):
