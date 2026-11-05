@@ -19,3 +19,7 @@ def update():
     subprocess.run(["docker", "compose", "down"], check=True) # docker compose down
     subprocess.run(["docker", "compose", "rm", "-f"], check=True) # docker compose rm -f
     subprocess.run(["docker", "compose", "up", "-d", "--build", "--force-recreate", "--remove-orphans"], check=True) # docker compose up -d --build --force-recreate --remove-orphans
+    
+    
+if __name__ == "__main__":
+    update()
