@@ -41,8 +41,8 @@ def update():
     subprocess.run(["docker", "compose", "down"], check=True) # docker compose down
     subprocess.run(["docker", "compose", "rm", "-f"], check=True) # docker compose rm -f
     subprocess.run(["docker", "compose", "up", "-d", "--build", "--force-recreate", "--remove-orphans"], check=True) # docker compose up -d --build --force-recreate --remove-orphans
-    subprocess.run(["ping", "google.com", "-c", "100"], check=True) # ping google.com -c 100    
-    subprocess.run(["ping", "kursplan.se", "-c", "100"], check=True) # ping kursplan.se -c 100
+    subprocess.run(["ping", "google.com", "-c", "10"], check=True) # ping google.com -c 100    
+    subprocess.run(["ping", "kursplan.se", "-c", "10"], check=True) # ping kursplan.se -c 100
     
     
 if __name__ == "__main__":
