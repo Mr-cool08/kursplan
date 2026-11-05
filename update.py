@@ -25,8 +25,8 @@ def before_update():
         print("Error: app.py file not found. Please create a app.py file before updating.")
         sys.exit(1)
     #check if port is available
-    if not is_port_available(load_dotenv().get("app_port", 80)):
-        print("Error: Port " + str(load_dotenv().get("app_port", 80)) + " is not available. Please free the port before updating.")
+    if not is_port_available(os.getenv("app_port", 80)):
+        print("Error: Port " + str(os.getenv("app_port", 80)) + " is not available. Please free the port before updating.")
         sys.exit(1)
 def update():
     subprocess.run(["git", "pull"], check=True) #git pull
