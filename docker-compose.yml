@@ -15,8 +15,10 @@ services:
       db:
         condition: service_healthy
 
-    ports:
-      - "${app_port:-8000}:8000"
+    # Cloudflare Tunnel routes to http://kursplan:8000.
+    # No public host port is needed.
+    expose:
+      - "8000"
 
     restart: unless-stopped
 
@@ -43,18 +45,18 @@ services:
             - .venv/
 
     networks:
-      - db
+      tunnel:
+        aliases:
+          - kursplan
+      backend:
 
 
   db:
     image: postgres:18
-    container_name: postgres-${environment:-dev}
 
     environment:
       POSTGRES_PASSWORD: ${db_password:-password}
 
-    ports:
-      - "${db_port:-54326}:5432"
 
     volumes:
       - postgres_data:/var/lib/postgresql
@@ -66,14 +68,15 @@ services:
       retries: 10
 
     networks:
-      - db
+      - backend
 
 
 networks:
-  db:
-    name: db
-    driver: bridge
-    external: false
+  tunnel:
+    external: true
+    name: jk_tunnel_net
+  backend:
+    internal: true
   
 
 
