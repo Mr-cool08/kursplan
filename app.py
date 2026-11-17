@@ -1,38 +1,57 @@
-from flask import Flask, render_template, request, session, redirect, url_for, Blueprint
+from flask import Flask, render_template, request, session, redirect, url_for
 import sqlite3
 from datetime import datetime, timedelta
+import logging
 import smtplib
 import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from dotenv import load_dotenv
-load_dotenv()
-import time
 import database
-from itertools import combinations
-import subprocess
-import urllib.parse
 from users import user_page
 from admin import admin_page
 
 
-
-
-db_path = os.getenv("db_path")
-if not db_path:
-    raise ValueError("Database path is not set in the .env file.")
+load_dotenv(Path(__file__).with_name(".env"))
+dev_mode = os.getenv("DEV_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 app = Flask(__name__)
 app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
+app.config["DEV_MODE"] = dev_mode
+
+if dev_mode:
+    dev_database_dir = TemporaryDirectory(prefix="kursplan-dev-")
+    app.config["DB_PATH"] = Path(dev_database_dir.name) / "database.db"
+    app.secret_key = app.secret_key or database.generate_secret_key()
+    app.logger.setLevel(logging.DEBUG)
+else:
+    db_path = os.getenv("db_path")
+    if not db_path:
+        raise ValueError("Database path is not set in the .env file.")
+    app.config["DB_PATH"] = db_path
 
 app.register_blueprint(user_page)
 app.register_blueprint(admin_page)
 
-environment = os.getenv("environment", "prod")
-if environment == "dev":
-    debug = True
-else:
-    debug = False
+
+def initialize_database():
+    db_path = app.config["DB_PATH"]
+    database.create_database(db_path)
+
+    email = os.getenv("test_email")
+    password = os.getenv("test_password")
+    if not dev_mode or (email and password):
+        database.ensure_test_user(email=email, password=password, db_path=db_path)
+
+
+if dev_mode:
+    initialize_database()
+    app.logger.debug("Development mode enabled. SQLite database: %s", app.config["DB_PATH"])
+
+
 @app.route('/logout')
 def logout():
     session.clear()
@@ -54,7 +73,6 @@ def health():
 
 
 
-@app.route('/fix_later') # The page to display the list of jobs
 def get_jobs():
     if 'authenticated' not in session or session['authenticated'] == False:
         return render_template('login.html')
@@ -75,9 +93,8 @@ def get_jobs():
     # Render the bookings.html template with the job data
     return render_template('bookings.html', jobs=jobs)
 
-@app.route('/jobs/<int:job_id>', methods=['POST']) # The action to accept the job
 def accept_job(job_id):
-    print(job_id)
+    app.logger.debug("Accepting legacy job %s", job_id)
     # Check if the user is authenticated
     if 'authenticated' not in session:
         return render_template('login.html')
@@ -181,7 +198,6 @@ def accept_job(job_id):
 
 
 
-@app.route('/submit', methods=['GET', 'POST'])
 def submit():
     if request.method == 'GET':
         if session.get('user_id'):
@@ -262,19 +278,15 @@ def page_not_found(e):
         ),
         404,
     )
+if not dev_mode:
+    # These routes use the legacy translation-job database schema.
+    app.add_url_rule('/fix_later', view_func=get_jobs)
+    app.add_url_rule('/jobs/<int:job_id>', view_func=accept_job, methods=['POST'])
+    app.add_url_rule('/submit', view_func=submit, methods=['GET', 'POST'])
+
 if __name__ == '__main__':
-    db_path = os.getenv("db_path")
-    if not db_path:
-        raise ValueError("Database path is not set in the .env file.")
-    database.create_database(db_path)  # Ensure the database and tables are created before running the app
-
-
-
-    # Ensure a default test account exists for easier manual testing
-    email = os.getenv("test_email")
-    password = os.getenv("test_password")
-    database.ensure_test_user(email=email, password=password, db_path=db_path)
-
+    if not dev_mode:
+        initialize_database()
     port = int(os.environ.get("app_port", 80))
     host = os.environ.get("app_host", "0.0.0.0")
-    app.run(port=port, host=host, debug=debug, use_reloader=False)
+    app.run(port=port, host=host, use_reloader=False)

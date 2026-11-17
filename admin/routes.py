@@ -1,13 +1,7 @@
-from flask import render_template, request, session, redirect, url_for, Blueprint
+from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 from functools import wraps
 import database
-import os
 import gen_func
-
-db_path = os.getenv("db_path")
-
-if not db_path:
-    raise ValueError("Database path is not set in the .env file.")
 
 
 admin_page = Blueprint(
@@ -36,8 +30,8 @@ def admin_required(func):
 @admin_page.route("/", methods=["GET"])
 @admin_required
 def dashboard():
-    bookings = database.get_all_bookings(db_path)
-    print(bookings)
+    bookings = database.get_all_bookings(current_app.config["DB_PATH"])
+    current_app.logger.debug("Loaded %s bookings for the admin dashboard", len(bookings))
     return render_template(
         "admin_dashboard.html",
         bookings=bookings
@@ -58,9 +52,10 @@ def book():
     ort = request.form.get("ort", "").strip()
 
     if not booking_ids or not booking_date or not ort:
-        print("Missing data")
+        current_app.logger.debug("Missing booking IDs, date or city")
         return redirect(url_for("admin_page.dashboard"))
 
+    db_path = current_app.config["DB_PATH"]
     database.book_bookings(booking_ids, booking_date, ort, db_path)
     for booking_id in booking_ids:
         email = database.get_email_by_booking_id(booking_id, db_path)
@@ -74,21 +69,20 @@ def login():
     if request.method == "POST":
         email = request.form.get("email")
         password = request.form.get("password")
-        print(email, password)
         user = database.login_user(
             email,
             password,
             "admin",
-            db_path
+            current_app.config["DB_PATH"]
         )
 
         if user:
-            print("User logged in:", user)
+            current_app.logger.debug("Admin login succeeded")
             session["user_id"] = user[0]
             session["role"] = "admin"
 
             return redirect(url_for("admin_page.dashboard"))
-        print("Login failed", user)
+        current_app.logger.debug("Admin login failed")
         return redirect(url_for("admin_page.login"))
 
     return render_template("login.html")

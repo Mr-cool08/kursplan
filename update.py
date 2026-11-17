@@ -49,8 +49,8 @@ def update():
     python = "venv/bin/python"
     subprocess.run([python, "-m", "ensurepip", "--upgrade"], check=True) # python -m ensurepip install --upgrade
     subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True) # python -m pip install --upgrade pip
-    subprocess.run([python, "-m", "pip", "install", "-r", "requirements.txt"], check=True) # python -m pip install -r requirements.txt
-    subprocess.run([python, "-m", "pytest", "-n", "auto", "--maxfail=1"], check=True) # python -m pytest -n auto --maxfail=1
+    subprocess.run([python, "-m", "pip", "install", "-r", "requirements-test.txt"], check=True)
+    subprocess.run([python, "-m", "pytest", "--maxfail=1"], check=True)
     subprocess.run(["docker", "compose", "pull"], check=True) # docker compose pull
     subprocess.run(["docker", "compose", "down"], check=True) # docker compose down
     subprocess.run(["docker", "compose", "rm", "-f"], check=True) # docker compose rm -f

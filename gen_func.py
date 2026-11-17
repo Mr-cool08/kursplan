@@ -3,11 +3,6 @@ import json
 from smtplib import SMTP
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from dotenv import load_dotenv
-
-
-
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 
 def _environment_value(name):

@@ -1,15 +1,10 @@
-from flask import Flask, render_template, request, session, redirect, url_for, Blueprint
+from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 import database
-import os
 from gen_func import read_utbildningar_from_json
-import gen_func
 
 
 user_page = Blueprint('user_page', __name__,
                         template_folder='templates')
-db_path = os.getenv("db_path")
-if not db_path:
-    raise ValueError("Database path is not set in the .env file.")
 
 @user_page.route('/')
 def index():
@@ -23,14 +18,14 @@ def dashboard():
         return redirect(url_for('user_page.login'))
     name = session.get('user_name')
     organization_number = session.get('organization_number')
-    user_id = session.get('user_id')
-    bookings = database.get_booking_by_name(name, db_path)
+    bookings = database.get_booking_by_name(name, current_app.config["DB_PATH"])
     
     return render_template('dashboard.html', name=name, organization_number=organization_number, bookings=bookings)
 
 @user_page.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
+        db_path = current_app.config["DB_PATH"]
         name = request.form['name']
         email = request.form['email']
         password = request.form['password']
@@ -60,7 +55,7 @@ def login():
         if not email or not password:
             return render_template('login.html', error='Please enter both email and password.')
         role = "user"
-        user = database.login_user(email, password, role, db_path)
+        user = database.login_user(email, password, role, current_app.config["DB_PATH"])
         if user:
             session['user_id'] = user[0]
             session['user_name'] = user[1]
@@ -90,8 +85,11 @@ def booking():
         if lokal == 'Egen':
             lokal = request.form['adress']
         datum = request.form['datum']
-        print(name, email, organization_number, utbildning, antal, ort, lokal, datum)
-        database.create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path)
+        booking_id = database.create_booking(
+            name, email, organization_number, utbildning, antal, ort, lokal, datum,
+            current_app.config["DB_PATH"],
+        )
+        current_app.logger.debug("Created booking %s", booking_id)
         return redirect(url_for('user_page.dashboard'))
     if request.method == 'GET':
         if 'user_id' not in session:
@@ -105,5 +103,5 @@ def booking():
 def cancel_booking(booking_id):
     if not session.get('user_id'):
         return redirect(url_for('user_page.login'))
-    database.update_status(booking_id, "cancelled", db_path)
+    database.update_status(booking_id, "cancelled", current_app.config["DB_PATH"])
     return redirect(url_for('user_page.dashboard'))
