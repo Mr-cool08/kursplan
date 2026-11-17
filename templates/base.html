@@ -1,14 +1,19 @@
 <!DOCTYPE html>
+{% set logo_url = url_for('static', filename='images/favicon/JKA_Logo.png') %}
 <html>
 <head>
     <link rel="stylesheet" href="{{ url_for('static', filename='style/base.css') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/25/25694.png" />
+    <link rel="icon" type="image/png" href="{{ logo_url }}">
     <title>{% block title %}{% endblock %}</title>
     {% block head %}{% endblock %}
 </head>
 <body>
-
+    <header class="site-header">
+        <a href="{{ url_for('user_page.index') }}">
+            <img src="{{ logo_url }}" alt="Kursplan – startsida" width="573" height="530">
+        </a>
+    </header>
 
     {% block content %}
     {% endblock %}
