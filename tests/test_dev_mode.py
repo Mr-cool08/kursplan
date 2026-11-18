@@ -56,7 +56,9 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
     output = run_app(
         "On",
         """
+        from contextlib import closing
         import logging
+        import sqlite3
         from pathlib import Path
         from unittest.mock import patch
 
@@ -76,6 +78,12 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
                 "password": "test-user-password", "organization_number": "0123456789",
             })
             assert signup.status_code == 302
+            user.get("/logout")
+            login = user.post("/login", data={
+                "email": "user@example.com", "password": "test-user-password",
+            })
+            assert login.location == "/dashboard"
+            assert user.get("/admin/").status_code == 403
             booking = user.post("/booking", data={
                 "utbildning": "Test course", "antal": "3", "ort": "Stockholm",
                 "lokal": "Sal 1", "datum": "2027-01-01",
@@ -85,8 +93,28 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
             assert row[4:6] == ("Test course", 3)
             assert row[-1] == "pending"
 
+            # Role changes made directly in the database take effect for the
+            # already authenticated session on the next admin request.
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    "UPDATE users SET role = 'admin' WHERE email = 'user@example.com'"
+                )
+            assert user.get("/admin/").status_code == 200
+            with closing(sqlite3.connect(db_path)) as connection, connection:
+                connection.execute(
+                    "UPDATE users SET role = 'user' WHERE email = 'user@example.com'"
+                )
+            assert user.get("/admin/").status_code == 403
+
             admin = app.test_client()
-            login = admin.post("/admin/login", data={
+            assert admin.get("/admin/").location == "/login"
+            assert admin.get("/admin/login").location == "/login"
+            legacy_login = admin.post("/admin/login", data={
+                "email": "admin@example.com", "password": "test-admin-password",
+            })
+            assert legacy_login.status_code == 307
+            assert legacy_login.location == "/login"
+            login = admin.post("/login", data={
                 "email": "admin@example.com", "password": "test-admin-password",
             })
             assert login.location == "/admin/"

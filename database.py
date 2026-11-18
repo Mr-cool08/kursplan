@@ -131,15 +131,32 @@ def ensure_test_user(email, password, db_path):
         )
 
 
-def login_user(email, password, role, db_path):
+def authenticate_user(email, password, db_path):
+    """Authenticate a user and return the database-backed account role."""
     with _cursor(db_path) as cursor:
         _execute(
             cursor,
-            "SELECT id, name, organization_number FROM users "
-            "WHERE email = %s AND password = %s AND role = %s",
-            (email, password, role),
+            "SELECT id, name, organization_number, email, role FROM users "
+            "WHERE email = %s AND password = %s",
+            (email, password),
         )
         return cursor.fetchone()
+
+
+def login_user(email, password, role, db_path):
+    """Authenticate a specific role (kept for backwards compatibility)."""
+    user = authenticate_user(email, password, db_path)
+    if user is None or user[4] != role:
+        return None
+    return user[:3]
+
+
+def get_user_role(user_id, db_path):
+    """Return the user's current role so access follows database changes."""
+    with _cursor(db_path) as cursor:
+        _execute(cursor, "SELECT role FROM users WHERE id = %s", (user_id,))
+        row = cursor.fetchone()
+        return row[0] if row else None
 
 
 def get_booking_by_name(name, db_path):

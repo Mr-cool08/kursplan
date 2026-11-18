@@ -6,10 +6,32 @@ from gen_func import read_utbildningar_from_json
 user_page = Blueprint('user_page', __name__,
                         template_folder='templates')
 
+VALID_ROLES = {"user", "admin"}
+
+
+def _dashboard_redirect(role):
+    if role == "admin":
+        return redirect(url_for("admin_page.dashboard"))
+    return redirect(url_for("user_page.dashboard"))
+
+
+def _current_database_role():
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+
+    role = database.get_user_role(user_id, current_app.config["DB_PATH"])
+    if role not in VALID_ROLES:
+        session.clear()
+        return None
+
+    session["role"] = role
+    return role
+
 @user_page.route('/')
 def index():
-    if 'user_id' in session:
-        return redirect(url_for('user_page.dashboard'))
+    if role := _current_database_role():
+        return _dashboard_redirect(role)
     return render_template('index.html')
 
 @user_page.route('/dashboard')
@@ -34,10 +56,12 @@ def signup():
             return render_template('signup.html', error='A user with this email already exists.')
         role = "user"
         user = database.create_user(name, email, password, organization_number, role, db_path)
+        session.clear()
         session['user_id'] = user[0]
         session['user_name'] = user[1]
         session['organization_number'] = user[2]
         session['user_email'] = user[3]
+        session['role'] = role
         return redirect(url_for('user_page.login'))
     else:
         return render_template('signup.html')
@@ -46,24 +70,28 @@ def signup():
 @user_page.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
-        if 'user_id' in session:
-            
-            return redirect(url_for('user_page.dashboard'))
+        if role := _current_database_role():
+            return _dashboard_redirect(role)
     elif request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
         if not email or not password:
-            return render_template('login.html', error='Please enter both email and password.')
-        role = "user"
-        user = database.login_user(email, password, role, current_app.config["DB_PATH"])
-        if user:
-            session['user_id'] = user[0]
-            session['user_name'] = user[1]
-            session['organization_number'] = user[2]
-            session['user_email'] = email
-            return redirect(url_for('user_page.dashboard'))
+            return render_template('login.html', error='Ange både e-postadress och lösenord.')
 
-        return render_template('login.html', error='Invalid email or password.')
+        user = database.authenticate_user(email, password, current_app.config["DB_PATH"])
+        if user and user[4] in VALID_ROLES:
+            user_id, name, organization_number, user_email, role = user
+            session.clear()
+            session.update(
+                user_id=user_id,
+                user_name=name,
+                organization_number=organization_number,
+                user_email=user_email,
+                role=role,
+            )
+            return _dashboard_redirect(role)
+
+        return render_template('login.html', error='Felaktig e-postadress eller lösenord.')
     return render_template('login.html')
 
 

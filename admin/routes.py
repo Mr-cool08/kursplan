@@ -15,11 +15,19 @@ admin_page = Blueprint(
 def admin_required(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        user_id = session.get("user_id")
+        if not user_id:
+            return redirect(url_for("user_page.login"))
 
-        if "user_id" not in session:
-            return redirect(url_for("admin_page.login"))
+        role = database.get_user_role(user_id, current_app.config["DB_PATH"])
+        if role is None:
+            session.clear()
+            return redirect(url_for("user_page.login"))
 
-        if session.get("role") != "admin":
+        # Do not trust a stale session role: external database changes should
+        # grant or revoke access on the very next admin request.
+        session["role"] = role
+        if role != "admin":
             return "Forbidden", 403
 
         return func(*args, **kwargs)
@@ -34,7 +42,8 @@ def dashboard():
     current_app.logger.debug("Loaded %s bookings for the admin dashboard", len(bookings))
     return render_template(
         "admin_dashboard.html",
-        bookings=bookings
+        bookings=bookings,
+        name=session.get("user_name"),
     )
 
 
@@ -66,27 +75,12 @@ def book():
 
 @admin_page.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
-        user = database.login_user(
-            email,
-            password,
-            "admin",
-            current_app.config["DB_PATH"]
-        )
-
-        if user:
-            current_app.logger.debug("Admin login succeeded")
-            session["user_id"] = user[0]
-            session["role"] = "admin"
-
-            return redirect(url_for("admin_page.dashboard"))
-        current_app.logger.debug("Admin login failed")
-        return redirect(url_for("admin_page.login"))
-
-    return render_template("login.html")
+    # Preserve old bookmarks and form posts while keeping /login as the one
+    # authentication endpoint. A 307 keeps POST data intact.
+    status_code = 307 if request.method == "POST" else 302
+    return redirect(url_for("user_page.login"), code=status_code)
 
 @admin_page.route("/booking", methods=["GET", "POST"])
+@admin_required
 def booking():
     return render_template("book.html")

@@ -48,6 +48,26 @@ def test_create_user_persists_details(db_path):
     assert database.login_user(EMAIL, PASSWORD, "user", db_path) == (
         user_id, NAME, ORGANIZATION
     )
+    assert database.authenticate_user(EMAIL, PASSWORD, db_path) == (
+        user_id, NAME, ORGANIZATION, EMAIL, "user"
+    )
+    assert database.get_user_role(user_id, db_path) == "user"
+
+
+def test_authentication_and_role_lookup_follow_external_role_change(db_path):
+    user_id = database.create_user(
+        NAME, EMAIL, PASSWORD, ORGANIZATION, "user", db_path
+    )[0]
+
+    with psycopg.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE users SET role = %s WHERE email = %s", ("admin", EMAIL)
+        )
+
+    assert database.authenticate_user(EMAIL, PASSWORD, db_path) == (
+        user_id, NAME, ORGANIZATION, EMAIL, "admin"
+    )
+    assert database.get_user_role(user_id, db_path) == "admin"
 
 
 def test_login_rejects_incorrect_email_password_or_role(db_path):
@@ -56,6 +76,9 @@ def test_login_rejects_incorrect_email_password_or_role(db_path):
     assert database.login_user("other@example.com", PASSWORD, "user", db_path) is None
     assert database.login_user(EMAIL, "wrong-password", "user", db_path) is None
     assert database.login_user(EMAIL, PASSWORD, "admin", db_path) is None
+    assert database.authenticate_user("other@example.com", PASSWORD, db_path) is None
+    assert database.authenticate_user(EMAIL, "wrong-password", db_path) is None
+    assert database.get_user_role(999999, db_path) is None
 
 
 def test_create_user_rejects_duplicate_email(db_path):
