@@ -57,7 +57,6 @@ services:
     environment:
       POSTGRES_PASSWORD: ${db_password:-password}
 
-
     volumes:
       - postgres_data:/var/lib/postgresql
 
@@ -66,6 +65,31 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+    networks:
+      - backend
+
+
+  db-access:
+    image: haproxy:3.2-alpine
+
+    # COMPOSE_PROFILES follows DEV_MODE through .env. This service therefore
+    # exists only when DEV_MODE=true.
+    profiles:
+      - "true"
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    configs:
+      - source: db_access_haproxy
+        target: /usr/local/etc/haproxy/haproxy.cfg
+
+    restart: unless-stopped
 
     networks:
       - backend
@@ -82,3 +106,24 @@ networks:
 
 volumes:
   postgres_data:
+
+
+configs:
+  db_access_haproxy:
+    content: |
+      global
+        log stdout format raw local0
+
+      defaults
+        log global
+        mode tcp
+        timeout connect 5s
+        timeout client 1h
+        timeout server 1h
+
+      frontend postgres
+        bind :5432
+        default_backend postgres
+
+      backend postgres
+        server db db:5432 check

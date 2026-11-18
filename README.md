@@ -8,6 +8,19 @@ Ange `test_email` och `test_password` i `.env` om du vill att appen skapar en ad
 
 Med `DEV_MODE=false` eller utan inställningen använder appen PostgreSQL via `db_path`.
 
+### Anslut till PostgreSQL med DBeaver i utvecklingsmiljön
+
+`COMPOSE_PROFILES` i `.env` följer värdet på `DEV_MODE`. När `DEV_MODE=true`
+startas den profil som binder PostgreSQL-porten till den lokala datorn. Med
+`DEV_MODE=false` startas inte profilen och ingen databasport publiceras.
+
+```sh
+docker compose up -d --remove-orphans
+```
+
+Anslut DBeaver till `127.0.0.1:5432`, databas `postgres`, användare `postgres`
+och lösenordet från `db_password` i `.env` (standardvärdet är `password`).
+
 ## Kör databastesterna lokalt
 
 ```sh
