@@ -93,6 +93,7 @@ services:
 
     networks:
       - backend
+      - db-access
 
 
 networks:
@@ -101,6 +102,8 @@ networks:
     name: jk_tunnel_net
   backend:
     internal: true
+  db-access:
+    driver: bridge
   
 
 
@@ -121,9 +124,9 @@ configs:
         timeout client 1h
         timeout server 1h
 
-      frontend postgres
+      frontend postgres_frontend
         bind :5432
-        default_backend postgres
+        default_backend postgres_backend
 
-      backend postgres
+      backend postgres_backend
         server db db:5432 check
