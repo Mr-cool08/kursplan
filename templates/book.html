@@ -1,66 +1,300 @@
 {% extends "base.html" %}
-{% block title %}Hem{% endblock %}
+{% block title %}Boka utbildning{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/book.css') }}">
+<script src="{{ url_for('static', filename='js/book.js') }}" defer></script>
 {% endblock %}
 
-
 {% block content %}
-<h1>Bokning av utbildning</h1>
-    
-<form action="{{ url_for('user_page.booking') }}" method="post">
+{% set form_values = values|default({}, true) %}
+{% set form_errors = errors|default({}, true) %}
+{% set selected_date_type = form_values.get('datumtyp', 'exakt') %}
+{% set selected_course_source = form_values.get('utbildningskalla', 'katalog') %}
+{% set selected_venue_responsibility = form_values.get('lokalansvar', '') %}
+{% set general_error = form_errors.get('_form') or form_errors.get('form') or form_errors.get('csrf_token') %}
 
+<main class="booking-page">
+  <h1>Bokning av utbildning</h1>
+  <p class="booking-intro">
+    Skicka en förfrågan med era önskemål. Datum och ort bekräftas först när förfrågan har behandlats.
+  </p>
 
-    <label for="datum">Datum:</label>
-    <input type="date" id="datum" name="datum" required><br><br>
+  <form id="booking-form" class="booking-form" action="{{ url_for('user_page.booking') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
 
+    {% if general_error %}
+    <div class="form-error" role="alert">{{ general_error }}</div>
+    {% endif %}
 
-    <label for="utbildning">Utbildning:</label>
-    <select id="utbildning" name="utbildning" required>
-        <option value="" disabled selected hidden>Välj utbildning</option>
-        {% for utbildning in utbildningar %}
-        <option value="{{ utbildning }}">{{ utbildning }}</option>
-        {% endfor %}
-    </select><br><br>
-    <label for="ort">Plats:</label>
-    <input type="text" id="ort" name="ort" placeholder="Ort" required><br><br>
+    <fieldset class="booking-section"{% if form_errors.get('datumtyp') %} aria-describedby="datumtyp-error"{% endif %}>
+      <legend>Datumönskemål <span class="field-requirement">(obligatoriskt)</span></legend>
 
-    <label for="antal">Antal deltagare:</label>
-    <input type="number" id="antal" name="antal" min="1" required><br><br>
+      <div class="choice-list">
+        <label class="choice-option" for="datumtyp-exakt">
+          <input
+            type="radio"
+            id="datumtyp-exakt"
+            name="datumtyp"
+            value="exakt"
+            required
+            {% if selected_date_type == 'exakt' %}checked{% endif %}
+            {% if form_errors.get('datumtyp') %}aria-invalid="true" aria-describedby="datumtyp-error"{% endif %}
+          >
+          <span>Exakt datum</span>
+        </label>
+        <label class="choice-option" for="datumtyp-intervall">
+          <input
+            type="radio"
+            id="datumtyp-intervall"
+            name="datumtyp"
+            value="intervall"
+            required
+            {% if selected_date_type == 'intervall' %}checked{% endif %}
+            {% if form_errors.get('datumtyp') %}aria-invalid="true" aria-describedby="datumtyp-error"{% endif %}
+          >
+          <span>Datumintervall</span>
+        </label>
+      </div>
+      {% if form_errors.get('datumtyp') %}
+      <p class="field-error" id="datumtyp-error" role="alert">{{ form_errors.get('datumtyp') }}</p>
+      {% endif %}
 
-    <label for="lokal">Lokal:</label>
-    <select id="lokal" name="lokal" required>
-        <option value="" disabled selected hidden>Välj lokal</option>
-        <option value="Egen">Egen lokal</option>
-        <option value="JK bokar">Ni bokar</option>
-    </select><br><br>
+      <div id="exact-date-fields" class="conditional-fields"{% if selected_date_type != 'exakt' %} hidden{% endif %}>
+        <div class="field-group">
+          <label for="onskat-datum">Datum <span class="field-requirement">(obligatoriskt)</span></label>
+          <input
+            type="date"
+            id="onskat-datum"
+            name="onskat_datum"
+            value="{{ form_values.get('onskat_datum', '') }}"
+            data-required-when-active="true"
+            {% if selected_date_type == 'exakt' %}required{% else %}disabled{% endif %}
+            {% if form_errors.get('onskat_datum') %}aria-invalid="true" aria-describedby="onskat-datum-error"{% endif %}
+          >
+          {% if form_errors.get('onskat_datum') %}
+          <p class="field-error" id="onskat-datum-error" role="alert">{{ form_errors.get('onskat_datum') }}</p>
+          {% endif %}
+        </div>
+      </div>
 
-    <div id="adress-container" hidden>
-        <label for="adress">Adress:</label>
-        <input type="text" id="adress" name="adress" placeholder="Adress">
-    </div>
-    <br><br>
+      <div id="date-range-fields" class="conditional-fields"{% if selected_date_type != 'intervall' %} hidden{% endif %}>
+        <div class="date-range">
+          <div class="field-group">
+            <label for="onskat-startdatum">Från och med <span class="field-requirement">(obligatoriskt)</span></label>
+            <input
+              type="date"
+              id="onskat-startdatum"
+              name="onskat_startdatum"
+              value="{{ form_values.get('onskat_startdatum', '') }}"
+              data-required-when-active="true"
+              {% if selected_date_type == 'intervall' %}required{% else %}disabled{% endif %}
+              {% if form_errors.get('onskat_startdatum') %}aria-invalid="true" aria-describedby="onskat-startdatum-error"{% endif %}
+            >
+            {% if form_errors.get('onskat_startdatum') %}
+            <p class="field-error" id="onskat-startdatum-error" role="alert">{{ form_errors.get('onskat_startdatum') }}</p>
+            {% endif %}
+          </div>
 
-    
-    <input type="submit" value="Nästa">
-</form>
+          <div class="field-group">
+            <label for="onskat-slutdatum">Till och med <span class="field-requirement">(obligatoriskt)</span></label>
+            <input
+              type="date"
+              id="onskat-slutdatum"
+              name="onskat_slutdatum"
+              value="{{ form_values.get('onskat_slutdatum', '') }}"
+              data-required-when-active="true"
+              {% if selected_date_type == 'intervall' %}required{% else %}disabled{% endif %}
+              {% if form_errors.get('onskat_slutdatum') %}aria-invalid="true" aria-describedby="onskat-slutdatum-error"{% endif %}
+            >
+            {% if form_errors.get('onskat_slutdatum') %}
+            <p class="field-error" id="onskat-slutdatum-error" role="alert">{{ form_errors.get('onskat_slutdatum') }}</p>
+            {% endif %}
+          </div>
+        </div>
+        {% if form_errors.get('datumintervall') %}
+        <p class="field-error" id="datumintervall-error" role="alert">{{ form_errors.get('datumintervall') }}</p>
+        {% endif %}
+      </div>
+    </fieldset>
 
+    <fieldset class="booking-section"{% if form_errors.get('utbildningskalla') %} aria-describedby="utbildningskalla-error"{% endif %}>
+      <legend>Utbildning <span class="field-requirement">(obligatoriskt)</span></legend>
 
-<script>
-    const lokalSelect = document.getElementById('lokal');
-    const adressContainer = document.getElementById('adress-container');
-    const adressInput = document.getElementById('adress');
+      <div class="choice-list">
+        <label class="choice-option" for="utbildningskalla-katalog">
+          <input
+            type="radio"
+            id="utbildningskalla-katalog"
+            name="utbildningskalla"
+            value="katalog"
+            required
+            {% if selected_course_source == 'katalog' %}checked{% endif %}
+            {% if form_errors.get('utbildningskalla') %}aria-invalid="true" aria-describedby="utbildningskalla-error"{% endif %}
+          >
+          <span>Välj utbildning ur listan</span>
+        </label>
+        <label class="choice-option" for="utbildningskalla-fritext">
+          <input
+            type="radio"
+            id="utbildningskalla-fritext"
+            name="utbildningskalla"
+            value="fritext"
+            required
+            {% if selected_course_source == 'fritext' %}checked{% endif %}
+            {% if form_errors.get('utbildningskalla') %}aria-invalid="true" aria-describedby="utbildningskalla-error"{% endif %}
+          >
+          <span>Utbildningen finns inte i listan – ange eget namn</span>
+        </label>
+      </div>
+      {% if form_errors.get('utbildningskalla') %}
+      <p class="field-error" id="utbildningskalla-error" role="alert">{{ form_errors.get('utbildningskalla') }}</p>
+      {% endif %}
 
-    lokalSelect.addEventListener('change', () => {
-        const egenLokal = lokalSelect.value === 'Egen';
-        adressContainer.hidden = !egenLokal;
-        adressInput.required = egenLokal;
+      <div id="catalog-course-fields" class="conditional-fields"{% if selected_course_source != 'katalog' %} hidden{% endif %}>
+        <div class="field-group">
+          <label for="utbildning-sok">Sök utbildning</label>
+          <input
+            type="search"
+            id="utbildning-sok"
+            autocomplete="off"
+            aria-describedby="utbildning-sok-hjalp utbildning-sok-status"
+            placeholder="Skriv hela eller delar av namnet"
+          >
+          <p class="field-help" id="utbildning-sok-hjalp">Sökningen filtrerar listan medan du skriver.</p>
+          <p class="search-status" id="utbildning-sok-status" role="status" aria-live="polite"></p>
+        </div>
 
-        if (!egenLokal) {
-            adressInput.value = '';
-        }
-    });
-</script>
+        <div class="field-group">
+          <label for="utbildning">Välj utbildning <span class="field-requirement">(obligatoriskt)</span></label>
+          <select
+            id="utbildning"
+            name="utbildning"
+            data-required-when-active="true"
+            data-no-results-text="Inga utbildningar matchar din sökning."
+            {% if selected_course_source == 'katalog' %}required{% else %}disabled{% endif %}
+            {% if form_errors.get('utbildning') %}aria-invalid="true" aria-describedby="utbildning-error"{% endif %}
+          >
+            <option value="" disabled{% if not form_values.get('utbildning') %} selected{% endif %}>Välj utbildning</option>
+            {% for utbildning in utbildningar|default([]) %}
+            <option value="{{ utbildning }}"{% if form_values.get('utbildning') == utbildning %} selected{% endif %}>{{ utbildning }}</option>
+            {% endfor %}
+          </select>
+          {% if form_errors.get('utbildning') %}
+          <p class="field-error" id="utbildning-error" role="alert">{{ form_errors.get('utbildning') }}</p>
+          {% endif %}
+        </div>
+      </div>
 
+      <div id="custom-course-fields" class="conditional-fields"{% if selected_course_source != 'fritext' %} hidden{% endif %}>
+        <div class="field-group">
+          <label for="egen-utbildning">Utbildningens namn <span class="field-requirement">(obligatoriskt)</span></label>
+          <input
+            type="text"
+            id="egen-utbildning"
+            name="egen_utbildning"
+            value="{{ form_values.get('egen_utbildning', '') }}"
+            data-required-when-active="true"
+            {% if selected_course_source == 'fritext' %}required{% else %}disabled{% endif %}
+            {% if form_errors.get('egen_utbildning') %}aria-invalid="true" aria-describedby="egen-utbildning-error"{% endif %}
+          >
+          {% if form_errors.get('egen_utbildning') %}
+          <p class="field-error" id="egen-utbildning-error" role="alert">{{ form_errors.get('egen_utbildning') }}</p>
+          {% endif %}
+        </div>
+      </div>
+    </fieldset>
 
+    <section class="booking-section" aria-labelledby="booking-details-heading">
+      <h2 id="booking-details-heading">Övriga önskemål</h2>
+
+      <div class="field-group">
+        <label for="ort">Önskad ort <span class="field-requirement">(valfritt)</span></label>
+        <input
+          type="text"
+          id="ort"
+          name="ort"
+          value="{{ form_values.get('ort', '') }}"
+          aria-describedby="ort-hjalp{% if form_errors.get('ort') %} ort-error{% endif %}"
+          {% if form_errors.get('ort') %}aria-invalid="true"{% endif %}
+        >
+        <p class="field-help" id="ort-hjalp">Kan kompletteras senare.</p>
+        {% if form_errors.get('ort') %}
+        <p class="field-error" id="ort-error" role="alert">{{ form_errors.get('ort') }}</p>
+        {% endif %}
+      </div>
+
+      <div class="field-group">
+        <label for="antal">Antal deltagare <span class="field-requirement">(obligatoriskt)</span></label>
+        <input
+          type="number"
+          id="antal"
+          name="antal"
+          min="1"
+          step="1"
+          inputmode="numeric"
+          value="{{ form_values.get('antal', '') }}"
+          required
+          {% if form_errors.get('antal') %}aria-invalid="true" aria-describedby="antal-error"{% endif %}
+        >
+        {% if form_errors.get('antal') %}
+        <p class="field-error" id="antal-error" role="alert">{{ form_errors.get('antal') }}</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <fieldset class="booking-section"{% if form_errors.get('lokalansvar') %} aria-describedby="lokalansvar-error"{% endif %}>
+      <legend>Utbildningslokal <span class="field-requirement">(obligatoriskt)</span></legend>
+
+      <div class="choice-list">
+        <label class="choice-option" for="lokalansvar-kund">
+          <input
+            type="radio"
+            id="lokalansvar-kund"
+            name="lokalansvar"
+            value="kund"
+            required
+            {% if selected_venue_responsibility == 'kund' %}checked{% endif %}
+            {% if form_errors.get('lokalansvar') %}aria-invalid="true" aria-describedby="lokalansvar-error"{% endif %}
+          >
+          <span>Vi ordnar lokalen själva</span>
+        </label>
+        <label class="choice-option" for="lokalansvar-sakerhetsutbildarna">
+          <input
+            type="radio"
+            id="lokalansvar-sakerhetsutbildarna"
+            name="lokalansvar"
+            value="sakerhetsutbildarna"
+            required
+            {% if selected_venue_responsibility == 'sakerhetsutbildarna' %}checked{% endif %}
+            {% if form_errors.get('lokalansvar') %}aria-invalid="true" aria-describedby="lokalansvar-error"{% endif %}
+          >
+          <span>Säkerhetsutbildarna ordnar lokalen</span>
+        </label>
+      </div>
+      {% if form_errors.get('lokalansvar') %}
+      <p class="field-error" id="lokalansvar-error" role="alert">{{ form_errors.get('lokalansvar') }}</p>
+      {% endif %}
+
+      <div id="local-address-fields" class="conditional-fields"{% if selected_venue_responsibility != 'kund' %} hidden{% endif %}>
+        <div class="field-group">
+          <label for="lokaladress">Adress till utbildningslokalen <span class="field-requirement">(obligatoriskt)</span></label>
+          <input
+            type="text"
+            id="lokaladress"
+            name="lokaladress"
+            value="{{ form_values.get('lokaladress', '') }}"
+            data-required-when-active="true"
+            {% if selected_venue_responsibility == 'kund' %}required{% else %}disabled{% endif %}
+            {% if form_errors.get('lokaladress') %}aria-invalid="true" aria-describedby="lokaladress-error"{% endif %}
+          >
+          {% if form_errors.get('lokaladress') %}
+          <p class="field-error" id="lokaladress-error" role="alert">{{ form_errors.get('lokaladress') }}</p>
+          {% endif %}
+        </div>
+      </div>
+    </fieldset>
+
+    <button class="booking-submit" type="submit">Skicka förfrågan</button>
+  </form>
+</main>
 {% endblock %}

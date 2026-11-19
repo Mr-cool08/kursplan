@@ -8,6 +8,34 @@ Ange `test_email` och `test_password` i `.env` om du vill att appen skapar en ad
 
 Med `DEV_MODE=false` eller utan inställningen använder appen PostgreSQL via `db_path`.
 
+## Databasuppgradering för bokningsönskemål
+
+`database.create_database()` skapar inte bara nya tabeller utan kör även den
+återkörbara migrationen av `bookings`. Den körs automatiskt när appen startas
+med `python app.py`, både för PostgreSQL och för SQLite i utvecklingsläget. En
+normal omstart efter att koden har uppdaterats räcker därför; kör inte någon
+databasreset och ta som vanligt en säkerhetskopia före en produktionsuppgradering.
+
+Nya förfrågningar lagrar kundens uppgifter strukturerat:
+
+- `datumtyp=exakt` använder `onskat_datum`, medan `datumtyp=intervall` använder
+  `onskat_startdatum` och `onskat_slutdatum`.
+- `utbildningskalla` skiljer katalogval från fritext.
+- `onskad_ort`, `lokalansvar` och `lokaladress` håller önskad ort och lokalval
+  åtskilda.
+- När en administratör bekräftar en förfrågan skrivs datum och ort till
+  `faststallt_datum` och `faststalld_ort`. Kundens ursprungliga önskemål ändras
+  inte.
+
+De äldre kolumnerna och det befintliga 10-fältskontraktet bevaras för gamla
+läsare. Vid migration fylls strukturerat exakt datum och önskad ort i för äldre
+väntande rader, där betydelsen kan härledas från det gamla formuläret. För äldre
+bokade eller avbrutna rader lämnas nya önskemålsfält tomma eftersom det inte går
+att säkert avgöra om deras äldre datum och ort redan har ändrats. Deras befintliga
+värden behålls oförändrade. `utbildningskalla`, `lokalansvar`, `lokaladress` och
+de fastställda fälten lämnas `NULL` för äldre rader när betydelsen inte kan
+härledas utan antaganden.
+
 ## Ge en användare administratörsbehörighet
 
 Alla användare och administratörer loggar in på samma sida, `/login`. Åtkomsten
@@ -43,9 +71,13 @@ och lösenordet från `db_password` i `.env` (standardvärdet är `password`).
 
 ```sh
 python -m pip install -r requirements-test.txt
+python -m playwright install chromium
 python -m pytest
 ```
 
 Efter installationen startar pytest en tillfällig PostgreSQL 18-instans automatiskt. Det behövs varken Docker, en `.env`-fil eller en redan körande databas. Varje test får en egen tom databas, som tas bort efter testet. När testkörningen är klar stoppas instansen och dess data tas bort. Kör som vanlig användare.
+
+Chromium används bara av bokningsformulärets webbläsartester. I CI installeras
+den automatiskt med Playwright innan pytest körs.
 
 Om den inbyggda PostgreSQL-versionen inte finns för din plattform kan du installera `requirements.txt` och sätta `TEST_DATABASE_URL` till en separat PostgreSQL-testserver. Testanvändaren behöver rätt att skapa databaser. Testerna skapar och tar bort sina egna databaser även i det läget.

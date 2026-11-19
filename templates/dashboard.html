@@ -55,6 +55,7 @@
             <td>
               {% if b[9] == 'pending' %}
               <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="cancel-button">Avbryt</button>
               </form>
               {% else %}

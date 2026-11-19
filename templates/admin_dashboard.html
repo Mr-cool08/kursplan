@@ -64,6 +64,7 @@
             <td>
               {% if b[9] == 'pending' %}
               <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="cancel-button">Avbryt</button>
               </form>
               {% else %}
@@ -77,6 +78,7 @@
     </div>
     <dialog id="book-dialog" class="booking-dialog">
       <form method="post" action="{{ url_for('admin_page.book') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="booking-dialog-header">
           <h3>Boka valda utbildningar</h3>
           <button type="button" class="dialog-close" onclick="this.closest('dialog').close()" aria-label="Stäng">&times;</button>

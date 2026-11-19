@@ -11,9 +11,15 @@ import pytest
 @pytest.fixture
 def run_app(tmp_path):
     project = Path(__file__).resolve().parents[1]
-    for module in ("app.py", "database.py", "gen_func.py"):
+    for module in (
+        "app.py",
+        "csrf.py",
+        "database.py",
+        "gen_func.py",
+        "utbildningar.json",
+    ):
         shutil.copy2(project / module, tmp_path)
-    for directory in ("admin", "templates", "users"):
+    for directory in ("admin", "static", "templates", "users"):
         shutil.copytree(
             project / directory,
             tmp_path / directory,
@@ -57,6 +63,7 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
         "On",
         """
         from contextlib import closing
+        from html.parser import HTMLParser
         import logging
         import sqlite3
         from pathlib import Path
@@ -73,6 +80,9 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
             assert isinstance(db_path, Path) and db_path.is_file()
 
             user = app.test_client()
+            health = user.get("/health")
+            assert health.status_code == 200
+            assert health.get_json() == {"status": "ok"}
             signup = user.post("/signup", data={
                 "name": "Test User", "email": "user@example.com",
                 "password": "test-user-password", "organization_number": "0123456789",
@@ -84,14 +94,46 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
             })
             assert login.location == "/dashboard"
             assert user.get("/admin/").status_code == 403
+
+            class CsrfParser(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.token = None
+
+                def handle_starttag(self, tag, attrs):
+                    attributes = dict(attrs)
+                    if tag == "input" and attributes.get("name") == "csrf_token":
+                        self.token = attributes.get("value")
+
+            booking_form = user.get("/booking")
+            assert booking_form.status_code == 200
+            parser = CsrfParser()
+            parser.feed(booking_form.get_data(as_text=True))
+            assert parser.token
             booking = user.post("/booking", data={
-                "utbildning": "Test course", "antal": "3", "ort": "Stockholm",
-                "lokal": "Sal 1", "datum": "2027-01-01",
+                "csrf_token": parser.token,
+                "datumtyp": "exakt",
+                "onskat_datum": "2027-01-01",
+                "onskat_startdatum": "",
+                "onskat_slutdatum": "",
+                "utbildningskalla": "katalog",
+                "utbildning": "HLR",
+                "egen_utbildning": "",
+                "antal": "3",
+                "ort": "Stockholm",
+                "lokalansvar": "kund",
+                "lokaladress": "Sal 1, Testgatan 2",
             })
             assert booking.status_code == 302
             (row,) = database.get_all_bookings(db_path)
-            assert row[4:6] == ("Test course", 3)
+            assert row[4:6] == ("HLR", 3)
             assert row[-1] == "pending"
+            details = database.get_booking_details_by_id(row[0], db_path)
+            assert details["datumtyp"] == "exakt"
+            assert details["onskat_datum"] == "2027-01-01"
+            assert details["onskad_ort"] == "Stockholm"
+            assert details["lokalansvar"] == "kund"
+            assert details["lokaladress"] == "Sal 1, Testgatan 2"
 
             # Role changes made directly in the database take effect for the
             # already authenticated session on the next admin request.
@@ -118,12 +160,22 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
                 "email": "admin@example.com", "password": "test-admin-password",
             })
             assert login.location == "/admin/"
+            admin_dashboard = admin.get("/admin/")
+            parser = CsrfParser()
+            parser.feed(admin_dashboard.get_data(as_text=True))
+            assert parser.token
             accepted = admin.post("/admin/bookings", data={
+                "csrf_token": parser.token,
                 "booking_ids": str(row[0]), "date": "2027-01-02", "ort": "Uppsala",
             })
             assert accepted.status_code == 302
             (row,) = database.get_all_bookings(db_path)
             assert (row[6], *row[-2:]) == ("Uppsala", "2027-01-02", "accepted")
+            details = database.get_booking_details_by_id(row[0], db_path)
+            assert details["faststallt_datum"] == "2027-01-02"
+            assert details["faststalld_ort"] == "Uppsala"
+            assert details["onskat_datum"] == "2027-01-01"
+            assert details["onskad_ort"] == "Stockholm"
             print(db_path)
         """,
     )

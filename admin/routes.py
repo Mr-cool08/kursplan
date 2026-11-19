@@ -1,5 +1,13 @@
-from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
+from datetime import date
 from functools import wraps
+
+from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
+
+from csrf import (
+    clear_booking_csrf_token,
+    get_booking_csrf_token,
+    validate_booking_csrf_token,
+)
 import database
 import gen_func
 
@@ -44,12 +52,16 @@ def dashboard():
         "admin_dashboard.html",
         bookings=bookings,
         name=session.get("user_name"),
+        csrf_token=get_booking_csrf_token(),
     )
 
 
 @admin_page.route("/bookings", methods=["POST"])
 @admin_required
 def book():
+    if not validate_booking_csrf_token(request.form.get("csrf_token", "")):
+        return "Formuläret kunde inte verifieras. Ladda om sidan och försök igen.", 400
+
     booking_ids = []
     for booking_id in request.form.getlist("booking_ids"):
         try:
@@ -60,16 +72,28 @@ def book():
     booking_date = request.form.get("date", "").strip()
     ort = request.form.get("ort", "").strip()
 
-    if not booking_ids or not booking_date or not ort:
+    try:
+        parsed_booking_date = date.fromisoformat(booking_date)
+    except ValueError:
+        parsed_booking_date = None
+
+    if (
+        not booking_ids
+        or parsed_booking_date is None
+        or parsed_booking_date.isoformat() != booking_date
+        or not ort
+    ):
         current_app.logger.debug("Missing booking IDs, date or city")
-        return redirect(url_for("admin_page.dashboard"))
+        return "Ange minst en bokning, ett giltigt datum och en ort.", 400
 
     db_path = current_app.config["DB_PATH"]
-    database.book_bookings(booking_ids, booking_date, ort, db_path)
-    for booking_id in booking_ids:
+    booked_ids = database.book_bookings(booking_ids, booking_date, ort, db_path)
+    for booking_id in booked_ids:
         email = database.get_email_by_booking_id(booking_id, db_path)
         utbildning = database.get_utbildning_by_booking_id(booking_id, db_path)
-        gen_func.send_booked_mail(email, booking_date, ort, booking_id, utbildning)
+        if email and utbildning:
+            gen_func.send_booked_mail(email, booking_date, ort, booking_id, utbildning)
+    clear_booking_csrf_token()
     return redirect(url_for("admin_page.dashboard"))
 
 
@@ -80,7 +104,8 @@ def login():
     status_code = 307 if request.method == "POST" else 302
     return redirect(url_for("user_page.login"), code=status_code)
 
+
 @admin_page.route("/booking", methods=["GET", "POST"])
 @admin_required
 def booking():
-    return render_template("book.html")
+    return redirect(url_for("user_page.booking"))

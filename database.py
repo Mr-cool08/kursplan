@@ -6,6 +6,45 @@ import sqlite3
 import psycopg
 
 
+_LEGACY_BOOKING_SELECT = """
+    id,
+    name,
+    email,
+    organization_number,
+    utbildning,
+    antal,
+    COALESCE(faststalld_ort, onskad_ort, ort) AS ort,
+    lokal,
+    COALESCE(faststallt_datum, datum) AS datum,
+    status
+"""
+
+_BOOKING_DETAIL_COLUMNS = (
+    "id",
+    "name",
+    "email",
+    "organization_number",
+    "utbildning",
+    "antal",
+    "ort",
+    "lokal",
+    "datum",
+    "status",
+    "datumtyp",
+    "onskat_datum",
+    "onskat_startdatum",
+    "onskat_slutdatum",
+    "utbildningskalla",
+    "onskad_ort",
+    "lokalansvar",
+    "lokaladress",
+    "faststallt_datum",
+    "faststalld_ort",
+)
+
+_BOOKING_MIGRATION_COLUMNS = _BOOKING_DETAIL_COLUMNS[10:]
+
+
 @contextmanager
 def _cursor(db_path):
     # A Path selects the local SQLite file. Production passes a PostgreSQL DSN.
@@ -31,15 +70,138 @@ def generate_secret_key():
     return secrets.token_hex(32)
 
 
-def create_booking(name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path):
+def _insert_booking(cursor, columns, values):
+    placeholders = ", ".join(["%s"] * len(columns))
+    _execute(
+        cursor,
+        f"INSERT INTO bookings ({', '.join(columns)}) "
+        f"VALUES ({placeholders}) RETURNING id",
+        values,
+    )
+    return cursor.fetchone()[0]
+
+
+def create_booking(
+    name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path
+):
+    """Create a legacy exact-date request while preserving its original wishes."""
     with _cursor(db_path) as cursor:
-        _execute(
+        return _insert_booking(
             cursor,
-            "INSERT INTO bookings (name, email, organization_number, utbildning, antal, ort, lokal, datum) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (name, email, organization_number, utbildning, antal, ort, lokal, datum),
+            (
+                "name",
+                "email",
+                "organization_number",
+                "utbildning",
+                "antal",
+                "ort",
+                "lokal",
+                "datum",
+                "datumtyp",
+                "onskat_datum",
+                "onskad_ort",
+            ),
+            (
+                name,
+                email,
+                organization_number,
+                utbildning,
+                antal,
+                ort,
+                lokal,
+                datum,
+                "exakt",
+                datum,
+                ort.strip() if isinstance(ort, str) and ort.strip() else None,
+            ),
         )
-        return cursor.fetchone()[0]
+
+
+def create_booking_request(
+    *,
+    name,
+    email,
+    organization_number,
+    utbildning,
+    antal,
+    datumtyp,
+    onskat_datum=None,
+    onskat_startdatum=None,
+    onskat_slutdatum=None,
+    utbildningskalla,
+    onskad_ort=None,
+    lokalansvar,
+    lokaladress=None,
+    db_path,
+):
+    """Persist a validated booking request with structured original wishes."""
+    if datumtyp == "exakt":
+        legacy_datum = onskat_datum
+        onskat_startdatum = None
+        onskat_slutdatum = None
+    elif datumtyp == "intervall":
+        legacy_datum = f"{onskat_startdatum} – {onskat_slutdatum}"
+        onskat_datum = None
+    else:
+        raise ValueError("Okänd datumtyp")
+
+    if utbildningskalla not in {"katalog", "fritext"}:
+        raise ValueError("Okänd utbildningskälla")
+
+    if lokalansvar == "kund":
+        legacy_lokal = lokaladress
+    elif lokalansvar == "sakerhetsutbildarna":
+        legacy_lokal = "Säkerhetsutbildarna ordnar lokalen"
+        lokaladress = None
+    else:
+        raise ValueError("Okänt lokalansvar")
+
+    normalized_ort = (
+        onskad_ort.strip()
+        if isinstance(onskad_ort, str) and onskad_ort.strip()
+        else None
+    )
+
+    with _cursor(db_path) as cursor:
+        return _insert_booking(
+            cursor,
+            (
+                "name",
+                "email",
+                "organization_number",
+                "utbildning",
+                "antal",
+                "ort",
+                "lokal",
+                "datum",
+                "datumtyp",
+                "onskat_datum",
+                "onskat_startdatum",
+                "onskat_slutdatum",
+                "utbildningskalla",
+                "onskad_ort",
+                "lokalansvar",
+                "lokaladress",
+            ),
+            (
+                name,
+                email,
+                organization_number,
+                utbildning,
+                antal,
+                normalized_ort,
+                legacy_lokal,
+                legacy_datum,
+                datumtyp,
+                onskat_datum,
+                onskat_startdatum,
+                onskat_slutdatum,
+                utbildningskalla,
+                normalized_ort,
+                lokalansvar,
+                lokaladress,
+            ),
+        )
 
 
 def check_user_exists(email, db_path):
@@ -65,6 +227,30 @@ def update_status(booking_id, status, db_path):
         _execute(cursor, "UPDATE bookings SET status = %s WHERE id = %s", (status, booking_id))
 
 
+def cancel_booking(booking_id, db_path):
+    """Cancel one pending booking and return the number of changed rows."""
+    with _cursor(db_path) as cursor:
+        _execute(
+            cursor,
+            "UPDATE bookings SET status = 'cancelled' "
+            "WHERE id = %s AND status = 'pending'",
+            (booking_id,),
+        )
+        return cursor.rowcount
+
+
+def cancel_booking_for_email(booking_id, email, db_path):
+    """Cancel a customer's pending booking without trusting its public id alone."""
+    with _cursor(db_path) as cursor:
+        _execute(
+            cursor,
+            "UPDATE bookings SET status = 'cancelled' "
+            "WHERE id = %s AND email = %s AND status = 'pending'",
+            (booking_id, email),
+        )
+        return cursor.rowcount
+
+
 def get_email_by_booking_id(booking_id, db_path):
     with _cursor(db_path) as cursor:
         _execute(cursor, "SELECT email FROM bookings WHERE id = %s", (booking_id,))
@@ -74,9 +260,12 @@ def get_email_by_booking_id(booking_id, db_path):
 
 def book_bookings(booking_ids, booking_date, ort, db_path):
     if not booking_ids:
-        return
+        return []
 
-    query = "UPDATE bookings SET datum = %s, ort = %s, status = 'accepted' WHERE status = 'pending'"
+    query = (
+        "UPDATE bookings SET faststallt_datum = %s, faststalld_ort = %s, "
+        "status = 'accepted' WHERE status = 'pending'"
+    )
     if isinstance(db_path, Path):
         placeholders = ", ".join(["%s"] * len(booking_ids))
         query += f" AND id IN ({placeholders})"
@@ -85,8 +274,11 @@ def book_bookings(booking_ids, booking_date, ort, db_path):
         query += " AND id = ANY(%s)"
         params = (booking_date, ort, booking_ids)
 
+    query += " RETURNING id"
+
     with _cursor(db_path) as cursor:
         _execute(cursor, query, params)
+        return [row[0] for row in cursor.fetchall()]
 
 
 def remove_booking(booking_id, db_path):
@@ -103,20 +295,45 @@ def get_utbildning_by_booking_id(booking_id, db_path):
 
 def get_booking_by_id(booking_id, db_path):
     with _cursor(db_path) as cursor:
-        _execute(cursor, "SELECT * FROM bookings WHERE id = %s", (booking_id,))
+        _execute(
+            cursor,
+            f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE id = %s",
+            (booking_id,),
+        )
         return cursor.fetchone()
+
+
+def get_booking_details_by_id(booking_id, db_path):
+    """Return raw legacy, original-request and confirmed booking fields by name."""
+    with _cursor(db_path) as cursor:
+        _execute(
+            cursor,
+            f"SELECT {', '.join(_BOOKING_DETAIL_COLUMNS)} "
+            "FROM bookings WHERE id = %s",
+            (booking_id,),
+        )
+        row = cursor.fetchone()
+        return dict(zip(_BOOKING_DETAIL_COLUMNS, row)) if row else None
 
 
 def get_bookings_by_email(email, db_path):
     with _cursor(db_path) as cursor:
-        _execute(cursor, "SELECT * FROM bookings WHERE email = %s", (email,))
+        _execute(
+            cursor,
+            f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE email = %s",
+            (email,),
+        )
         rows = cursor.fetchall()
         return rows if rows else None
 
 
 def get_bookings_by_status(status, db_path):
     with _cursor(db_path) as cursor:
-        _execute(cursor, "SELECT * FROM bookings WHERE status = %s", (status,))
+        _execute(
+            cursor,
+            f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE status = %s",
+            (status,),
+        )
         rows = cursor.fetchall()
         return rows if rows else None
 
@@ -161,7 +378,11 @@ def get_user_role(user_id, db_path):
 
 def get_booking_by_name(name, db_path):
     with _cursor(db_path) as cursor:
-        _execute(cursor, "SELECT * FROM bookings WHERE name = %s", (name,))
+        _execute(
+            cursor,
+            f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE name = %s",
+            (name,),
+        )
         return cursor.fetchall()
 
 
@@ -172,8 +393,53 @@ def get_all_bookings(db_path):
             cursor.connection.create_function(
                 "lower", 1, lambda value: value.lower() if value is not None else None
             )
-        _execute(cursor, "SELECT * FROM bookings ORDER BY lower(utbildning) ASC NULLS LAST, id ASC")
+        _execute(
+            cursor,
+            f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings "
+            "ORDER BY lower(utbildning) ASC NULLS LAST, id ASC",
+        )
         return cursor.fetchall()
+
+
+def _existing_booking_columns(cursor):
+    if isinstance(cursor, sqlite3.Cursor):
+        cursor.execute("PRAGMA table_info(bookings)")
+        return {row[1] for row in cursor.fetchall()}
+
+    _execute(
+        cursor,
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'bookings'",
+    )
+    return {row[0] for row in cursor.fetchall()}
+
+
+def _migrate_bookings(cursor):
+    existing_columns = _existing_booking_columns(cursor)
+    for column in _BOOKING_MIGRATION_COLUMNS:
+        if column not in existing_columns:
+            # Column names come exclusively from the fixed migration allowlist above.
+            _execute(cursor, f"ALTER TABLE bookings ADD COLUMN {column} TEXT")
+
+    # A legacy pending row can only represent the old exact-date request form.
+    # Accepted/cancelled rows may already contain administrator-confirmed values,
+    # so their unknown original wishes deliberately remain NULL.
+    _execute(
+        cursor,
+        "UPDATE bookings SET datumtyp = 'exakt' "
+        "WHERE status = 'pending' AND datumtyp IS NULL AND datum IS NOT NULL",
+    )
+    _execute(
+        cursor,
+        "UPDATE bookings SET onskat_datum = datum "
+        "WHERE status = 'pending' AND datumtyp = 'exakt' "
+        "AND onskat_datum IS NULL AND datum IS NOT NULL",
+    )
+    _execute(
+        cursor,
+        "UPDATE bookings SET onskad_ort = NULLIF(TRIM(ort), '') "
+        "WHERE status = 'pending' AND onskad_ort IS NULL AND ort IS NOT NULL",
+    )
 
 
 def create_database(db_path):
@@ -195,9 +461,20 @@ def create_database(db_path):
                 ort TEXT,
                 lokal TEXT,
                 datum TEXT,
-                status TEXT NOT NULL DEFAULT 'pending'
+                status TEXT NOT NULL DEFAULT 'pending',
+                datumtyp TEXT,
+                onskat_datum TEXT,
+                onskat_startdatum TEXT,
+                onskat_slutdatum TEXT,
+                utbildningskalla TEXT,
+                onskad_ort TEXT,
+                lokalansvar TEXT,
+                lokaladress TEXT,
+                faststallt_datum TEXT,
+                faststalld_ort TEXT
             )""",
         )
+        _migrate_bookings(cursor)
         _execute(
             cursor,
             f"""CREATE TABLE IF NOT EXISTS users (

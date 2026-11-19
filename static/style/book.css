@@ -1,110 +1,187 @@
-/* Default styles for all screen sizes */
-input[type="text"],
-input[type="tel"],
-input[type="email"],
-select,
-input[type="date"],
-input[type="datetime-local"],
-input[type="checkbox"], 
-input[type="number"] {
-    width: 95%;
-    padding: 10px;
+.booking-page {
+    padding: 0 16px;
+}
+
+.booking-page .booking-intro {
+    max-width: 640px;
+    margin: 0 auto 20px;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.booking-page .booking-form {
+    display: grid;
+    gap: 20px;
+    width: min(100%, 640px);
+    max-width: 640px;
+    box-sizing: border-box;
+}
+
+.booking-page .booking-section {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+    margin: 0;
+    padding: 18px;
+    border: 1px solid #d4d4d4;
     border-radius: 4px;
-    border: 1px solid #ccc;
 }
 
-#platform-container,
-#location-container {
-    display: none;
-    margin-bottom: 60px;
+.booking-page fieldset.booking-section legend,
+.booking-page .booking-section h2 {
+    padding: 0 6px;
+    margin: 0;
+    color: #333;
+    font-size: 1.1rem;
+    font-weight: 700;
 }
 
-.required {
-    color: red;
-}
-/* Adjust select width for smaller screens (e.g., mobile) */
-@media (max-width: 768px) {
-    input[type="datetime-local"],
-    select {
-        margin-bottom: 10px;
-        max-width: 400px;
-        margin: 0 auto;
-        background-color: #fff;
-        padding: 20px;
-        height: 50px;
-        border-radius: 4px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        width: 100%; /* Adjust the width as needed for mobile */
-        
-    }
+.booking-page .booking-section h2 {
+    padding: 0;
 }
 
-
-.container {
-  display: block;
-  position: relative;
-  padding-top:2px;
-  padding-left: 35px;
-  margin-bottom: 12px;
-  cursor: pointer;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  user-select: none;
-  
+.booking-page .field-requirement {
+    color: #555;
+    font-size: 0.85em;
+    font-weight: 400;
 }
 
-/* Hide the browser's default checkbox */
-.container input {
-    position: absolute;
-    opacity: 0;
-    cursor: pointer;
-    height: 0;
-    width: 0;
+.booking-page .field-group,
+.booking-page .conditional-fields {
+    min-width: 0;
 }
 
-/* Create a custom checkbox */
-.checkmark {
-    position: absolute;
-    top: 0;
-    left: 0;
-    height: 20px;
+.booking-page .field-group label {
+    margin-bottom: 7px;
+    font-weight: 600;
+}
+
+.booking-page .booking-form input[type="text"],
+.booking-page .booking-form input[type="search"],
+.booking-page .booking-form input[type="date"],
+.booking-page .booking-form input[type="number"],
+.booking-page .booking-form select {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px;
+    box-sizing: border-box;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #222;
+    font: inherit;
+}
+
+.booking-page .booking-form input[type="radio"] {
     width: 20px;
-    background-color: #eee;
-    border: 1px solid #ccc; /* Match the border color of other input elements */
-    border-radius: 4px; /* Match the border-radius of other input elements */
-}
-/* On mouse-over, add a grey background color */
-.container:hover input ~ .checkmark {
-  background-color: #ccc;
+    height: 20px;
+    margin: 1px 0 0;
+    flex: 0 0 auto;
+    accent-color: #333;
 }
 
-/* When the checkbox is checked, add a blue background */
-.container input:checked ~ .checkmark {
-  background-color: #2196F3;
+.booking-page .choice-list {
+    display: grid;
+    gap: 10px;
 }
 
-/* Create the checkmark/indicator (hidden when not checked) */
-.checkmark:after {
-  content: "";
-  position: absolute;
-  display: none;
+.booking-page .choice-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0;
+    padding: 10px;
+    border: 1px solid #d4d4d4;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1.35;
 }
 
-/* Show the checkmark when checked */
-.container input:checked ~ .checkmark:after {
-  display: block;
+.booking-page .choice-option:hover {
+    background-color: #f7f7f7;
 }
 
-/* Style the checkmark/indicator */
-.container .checkmark:after {   
-  left: 7px;
-  top: 3px;
-  width: 4px;
-  height: 9px;
-  border: solid white;
-  border-width: 0 3px 3px 0;
-  -webkit-transform: rotate(45deg);
-  -ms-transform: rotate(45deg);
-  transform: rotate(45deg);
+.booking-page .date-range {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.booking-page .field-help,
+.booking-page .search-status {
+    margin: 6px 0 0;
+    color: #555;
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+
+.booking-page .search-status {
+    min-height: 1.25em;
+}
+
+.booking-page .field-error,
+.booking-page .form-error {
+    color: #9b1c1c;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.booking-page .field-error {
+    margin: 6px 0 0;
+    font-size: 0.9rem;
+}
+
+.booking-page .form-error {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid #c94b4b;
+    border-radius: 4px;
+    background-color: #fff2f2;
+}
+
+.booking-page .booking-form [aria-invalid="true"] {
+    border-color: #b42318;
+}
+
+.booking-page .booking-form input:focus-visible,
+.booking-page .booking-form select:focus-visible,
+.booking-page .booking-form button:focus-visible {
+    outline: 3px solid #1769aa;
+    outline-offset: 2px;
+}
+
+.booking-page .booking-submit {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px;
+    border: 0;
+    border-radius: 4px;
+    background-color: #333;
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.booking-page .booking-submit:hover {
+    background-color: #555;
+}
+
+.booking-page [hidden] {
+    display: none !important;
+}
+
+@media (max-width: 600px) {
+    .booking-page {
+        padding: 0 10px;
+    }
+
+    .booking-page .booking-form,
+    .booking-page .booking-section {
+        padding: 14px;
+    }
+
+    .booking-page .date-range {
+        grid-template-columns: 1fr;
+    }
 }
