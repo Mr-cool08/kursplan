@@ -77,8 +77,8 @@ python -m pytest
 
 Efter installationen startar pytest en tillfällig PostgreSQL 18-instans automatiskt. Det behövs varken Docker, en `.env`-fil eller en redan körande databas. Varje test får en egen tom databas, som tas bort efter testet. När testkörningen är klar stoppas instansen och dess data tas bort. Kör som vanlig användare.
 
-Chromium används bara av bokningsformulärets webbläsartester. I CI installeras
-den automatiskt med Playwright innan pytest körs.
+Chromium används av webbläsartesterna. I CI installeras den automatiskt med
+Playwright innan pytest körs.
 
 Om den inbyggda PostgreSQL-versionen inte finns för din plattform kan du installera `requirements.txt` och sätta `TEST_DATABASE_URL` till en separat PostgreSQL-testserver. Testanvändaren behöver rätt att skapa databaser. Testerna skapar och tar bort sina egna databaser även i det läget.
 
@@ -90,38 +90,45 @@ kurskatalogen och GitHub Actions, samt pytest på Python 3.12 och 3.15 med
 PostgreSQL 18, SQLite och Chromium. På pull requests granskar GitHub även nya
 sårbara beroenden. Snyk rapporterar separat i Actions och Code Scanning.
 
-CI bygger webbimagen, startar projektets faktiska Compose-konfiguration mot en
-separat PostgreSQL-instans och provar `/health`, statiska filer och en
-administratörsinloggning via nätverksaliaset som tunneln använder. När CI är
-grönt på `main` kan samma testade image driftsättas. Testrapporter, eventuella
-webbläsarspår och release-artefakten sparas i sju dagar i Actions.
+CI kör samma bygge och isolerade tester som `update.py`. Därefter startar den
+projektets Compose-konfiguration mot en separat PostgreSQL-instans och provar
+`/health`, statiska filer och en
+administratörsinloggning via nätverksaliaset som tunneln använder. Testrapporter
+och eventuella webbläsarspår sparas i sju dagar i Actions.
 
 Aktivera **Release gate** som obligatorisk kontroll i GitHub och lägg till en
 oberoende granskare med skrivbehörighet för obligatoriska godkännanden. Följ
 [guiden för kodgranskning](.github/code-review.md) för inställningarna för `main`.
 
-### Aktivera driftsättning från GitHub
+### Uppdatera produktionen från servern
 
-1. Skapa miljön `production` under **Settings → Environments**. Tillåt enbart
-   `main` och konfigurera en oberoende godkännare om ni vill godkänna varje
-   driftsättning manuellt.
-2. Ange miljövariablerna `PRODUCTION_SSH_HOST`, `PRODUCTION_SSH_USER` och
-   `PRODUCTION_PROJECT_PATH` (absolut sökväg till befintligt Compose-projekt).
-   Ange `PRODUCTION_SSH_PORT` om värden använder annan port än 22. Lägg SSH-nyckeln
-   och värdens verifierade `known_hosts`-rad i miljöhemligheterna
-   `PRODUCTION_SSH_KEY` respektive `PRODUCTION_SSH_KNOWN_HOSTS`. Serverkontot
-   behöver komma åt projektet, dess Git-remote och Docker Compose.
-3. Kontrollera att servern kör Linux/amd64, har Python 3 och stöd för
-   `docker compose up --wait`. Produktionsprojektet behöver en körande
-   webbcontainer, den lokala `.env`-filen med `DEV_MODE=false` och samma
-   `docker-compose.yml` som CI testade. Granska och uppdatera serverns
-   Compose-fil separat vid infrastrukturändringar.
-4. Sätt repositoryvariabeln `ENABLE_PRODUCTION_DEPLOY=true` när miljön är redo.
-   Nästa godkända CI-körning för aktuell `main` startar **Deploy production**.
+Kör kommandot i Kursplans befintliga projektkatalog på produktionsservern.
 
-Driftsättaren kontrollerar checksumman och committen, byter webbimagen och
-kontrollerar Compose-hälsa, PostgreSQL-anslutningen och
-`https://kursplan.se/health`. Vid fel försöker den återställa den tidigare
-webbimagen. Databasens schema och data återställs separat om en migration
-behöver backas. Säkerhetskopiera före schemaändringar.
-Se [driftkommandona](Commands.md) för omkörning.
+```sh
+python3 update.py
+```
+
+Skriptet hämtar senaste `origin/main` och kontrollerar att de spårade filerna
+är rena och att `main` kan uppdateras med en fast-forward. Det bygger webbimagen
+och kör tester med avstängd e-post, ett tillfälligt privat Docker-nätverk och
+en egen PostgreSQL-databas. Om ett test misslyckas kör den befintliga
+webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet hälsan
+och avslutar.
+
+Efter godkända tester flyttar skriptet fram `main`, driftsätter den testade
+webbimagen i det befintliga Compose-projektet och kontrollerar Compose-hälsan,
+databasanslutningen och `https://kursplan.se/health`. Vid fel under
+driftsättningen försöker skriptet återställa föregående webbimage. Granska
+ändringar i `docker-compose.yml` separat innan de införs i produktion.
+Skriptet avbryter uppdateringen när den filen skiljer sig. Säkerhetskopiera
+databasen före schemaändringar och hantera eventuell återställning av en
+databasmigration separat.
+
+Servern behöver Linux, Git, Docker och Docker Compose med stöd för `up --wait`.
+Använd Python 3.11.4 eller nyare, eller en distributionsversion som har
+`tarfile.data_filter` via en säkerhetsuppdatering. Kör på `main` i den befintliga
+driftsmappen med dess `.env`, `DEV_MODE=false` och en fungerande Compose-stack.
+Serverkontot behöver åtkomst till Docker, Git-repot och de register som bygget
+och testerna använder.
+Kommandot kör kontrollerna på servern med Docker. GitHub Actions granskar
+ändringar i pull requests. Se [driftkommandona](Commands.md) för första hämtningen.

@@ -1,8 +1,9 @@
-import hashlib
 import io
-import json
 import subprocess
+import tarfile
+from pathlib import Path
 from unittest.mock import Mock, call
+from uuid import UUID
 
 import pytest
 
@@ -12,195 +13,249 @@ import update
 REVISION = "a" * 40
 NEW_IMAGE = f"sha256:{'b' * 64}"
 OLD_IMAGE = f"sha256:{'c' * 64}"
-RELEASE_IMAGE = f"kursplan:{REVISION}"
 WEB_IMAGE = "kursplan-web"
 WEB_UP = (
     *update.COMPOSE,
     "up", "--detach", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "120", "web",
 )
-GIT_FETCH = ("git", "fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main")
-GIT_HEAD = ("git", "rev-parse", "--verify", "refs/remotes/origin/main")
-GIT_TESTED_MANIFEST = ("git", "rev-parse", "--verify", f"{REVISION}:docker-compose.yml")
-GIT_LOCAL_MANIFEST = ("git", "hash-object", "--path=docker-compose.yml", "docker-compose.yml")
-COMPOSE_CONFIG = (*update.COMPOSE, "config", "--format", "json")
+WEB_PS = (*update.COMPOSE, "ps", "--quiet", "web")
 WEB_INSPECT = ("docker", "inspect", "--format", "{{.Image}}", "web-container")
-DOCKER_PLATFORM = ("docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
 DATABASE_CHECK = (*update.COMPOSE, "exec", "-T", "web", "python", "-c", update.DATABASE_PROBE)
+GIT_MERGE = ("git", "merge", "--ff-only", "--no-overwrite-ignore", REVISION)
 
 
 @pytest.fixture
-def artifact(tmp_path, monkeypatch):
+def pipeline(monkeypatch):
+    steps = Mock()
+    for name in (
+        "verify_checkout", "fetch_revision", "verify_source", "production_web_image",
+        "running_web_image", "export_source", "build_and_test", "run", "deploy",
+        "image_revision", "verify_database", "verify_public_health",
+    ):
+        monkeypatch.setattr(update, name, getattr(steps, name))
+
+    steps.image_revision.return_value = "e" * 40
+    steps.fetch_revision.return_value = REVISION
+    steps.production_web_image.return_value = WEB_IMAGE
+    steps.running_web_image.return_value = OLD_IMAGE
+    steps.build_and_test.return_value = NEW_IMAGE
+    return steps
+
+
+def test_updates_only_after_build_and_tests_pass(pipeline):
+    update.update()
+
+    revision, source = pipeline.export_source.call_args.args
+    assert revision == REVISION
+    pipeline.build_and_test.assert_called_once_with(source, REVISION)
+    assert not Path(source).exists()
+    assert pipeline.fetch_revision.call_count == 2
+    assert pipeline.verify_checkout.call_count == 2
+    assert pipeline.verify_source.call_args_list == [call(REVISION), call(REVISION)]
+    pipeline.deploy.assert_called_once_with(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
+
+    calls = pipeline.mock_calls
+    assert calls.index(call.export_source(REVISION, source)) < calls.index(call.build_and_test(source, REVISION))
+    assert calls.index(call.build_and_test(source, REVISION)) < calls.index(call.run(*GIT_MERGE))
+    assert calls.index(call.run(*GIT_MERGE)) < calls.index(call.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE))
+
+
+@pytest.mark.parametrize("failed_step", ["export_source", "build_and_test", "run"])
+def test_failure_before_rollout_leaves_production_running(pipeline, failed_step):
+    failure = subprocess.CalledProcessError(1, failed_step)
+    getattr(pipeline, failed_step).side_effect = failure
+
+    with pytest.raises(subprocess.CalledProcessError):
+        update.update()
+
+    pipeline.deploy.assert_not_called()
+    if failed_step != "run":
+        assert call.run(*GIT_MERGE) not in pipeline.mock_calls
+
+
+def test_new_main_commit_during_tests_stops_rollout(pipeline):
+    pipeline.fetch_revision.side_effect = [REVISION, "d" * 40]
+
+    with pytest.raises(update.DeploymentError):
+        update.update()
+
+    pipeline.build_and_test.assert_called_once()
+    assert call.run(*GIT_MERGE) not in pipeline.mock_calls
+    pipeline.deploy.assert_not_called()
+
+
+def test_changed_running_image_during_tests_stops_rollout(pipeline):
+    pipeline.running_web_image.side_effect = [OLD_IMAGE, f"sha256:{'d' * 64}"]
+
+    with pytest.raises(update.DeploymentError):
+        update.update()
+
+    pipeline.build_and_test.assert_called_once()
+    assert call.run(*GIT_MERGE) not in pipeline.mock_calls
+    pipeline.deploy.assert_not_called()
+
+
+def test_checkout_change_during_tests_stops_rollout(pipeline):
+    pipeline.verify_checkout.side_effect = [None, update.DeploymentError("Källkoden har lokala ändringar.")]
+
+    with pytest.raises(update.DeploymentError):
+        update.update()
+
+    pipeline.build_and_test.assert_called_once()
+    assert call.run(*GIT_MERGE) not in pipeline.mock_calls
+    pipeline.deploy.assert_not_called()
+
+
+def test_skips_rebuilding_running_revision(pipeline):
+    pipeline.image_revision.return_value = REVISION
+
+    update.update()
+
+    pipeline.verify_database.assert_called_once_with()
+    pipeline.verify_public_health.assert_called_once_with()
+    pipeline.export_source.assert_not_called()
+    pipeline.build_and_test.assert_not_called()
+    pipeline.run.assert_not_called()
+    pipeline.deploy.assert_not_called()
+
+
+@pytest.mark.parametrize("tracked_env", [False, True])
+def test_exports_tracked_revision_without_production_env(tmp_path, monkeypatch, tracked_env):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").touch()
-    (tmp_path / "docker-compose.yml").touch()
-    archive = tmp_path / "kursplan-image.tar.gz"
-    archive.write_bytes(b"test-image")
-    checksum = tmp_path / "kursplan-image.tar.gz.sha256"
-    checksum.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n", encoding="ascii")
-    return archive, checksum
+    (tmp_path / ".env").write_text("DEV_MODE=false\n", encoding="ascii")
+    source = tmp_path / "staged" / "source"
+    source.parent.mkdir()
+    archive = source.parent / "source.tar"
+
+    def write_tracked_files(*args):
+        with tarfile.open(archive, "w") as tar:
+            files = {"app.py": b"print('tracked release')\n"}
+            if tracked_env:
+                files[".env"] = b"DEBUG=true\n"
+            for name, data in files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                tar.addfile(entry, io.BytesIO(data))
+
+    git = Mock(side_effect=write_tracked_files)
+    monkeypatch.setattr(update, "run", git)
+
+    if tracked_env:
+        with pytest.raises(update.DeploymentError, match="Git-spårad .env"):
+            update.export_source(REVISION, source)
+    else:
+        update.export_source(REVISION, source)
+        assert (source / "app.py").read_bytes() == b"print('tracked release')\n"
+        assert not (source / ".env").exists()
+        assert not archive.exists()
+    git.assert_called_once_with("git", "archive", "--format=tar", "--output", str(archive), REVISION)
+
+
+def test_failed_pytest_cleans_only_its_isolated_resources(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(update, "uuid4", lambda: UUID("12345678-abcd-4000-8000-000000000000"))
+    network = "kursplan-update-12345678abcd"
+    runner = f"{network}-pytest"
+    test_image = f"kursplan:{network}-tests"
+
+    def docker(*command, capture=False):
+        if command[:3] == ("docker", "image", "inspect"):
+            return NEW_IMAGE
+        if command[:2] == ("docker", "run") and runner in command:
+            raise subprocess.CalledProcessError(1, command)
+
+    run = Mock(side_effect=docker)
+    cleanup = Mock()
+    monkeypatch.setattr(update, "run", run)
+    monkeypatch.setattr(update.subprocess, "run", cleanup)
+    monkeypatch.setattr(update, "wait_for_test_container", Mock())
+
+    with pytest.raises(subprocess.CalledProcessError):
+        update.build_and_test(source, REVISION)
+
+    run.assert_any_call("docker", "network", "create", "--internal", network)
+    test_runs = [args for args, _ in run.call_args_list if args[:2] == ("docker", "run")]
+    assert len(test_runs) == 2
+    for args in test_runs:
+        assert args[args.index("--network") + 1] == network
+        assert not {"-p", "--publish", "-v", "--volume", "--mount"}.intersection(args)
+    env = (tmp_path / "test.env").read_text(encoding="ascii")
+    assert "@db:5432/postgres" in env
+    assert "send_mail=0\n" in env
+
+    assert [args[0] for args, _ in cleanup.call_args_list] == [
+        ("docker", "rm", "-fv", f"{network}-smoke", runner, f"{network}-web", f"{network}-db"),
+        ("docker", "network", "rm", network),
+        ("docker", "image", "rm", test_image),
+    ]
 
 
 @pytest.fixture
-def deployment(monkeypatch, artifact):
-    archive, _ = artifact
+def deployment(monkeypatch):
     state = {"current": OLD_IMAGE, "web_tag": OLD_IMAGE}
-    metadata = {
-        "Id": NEW_IMAGE,
-        "Os": "linux",
-        "Architecture": "amd64",
-        "Config": {"Labels": {"org.opencontainers.image.revision": REVISION}},
-    }
     responses = {
-        GIT_FETCH: lambda: None,
-        GIT_HEAD: lambda: REVISION,
-        GIT_TESTED_MANIFEST: lambda: "same-manifest-id",
-        GIT_LOCAL_MANIFEST: lambda: "same-manifest-id",
-        COMPOSE_CONFIG: lambda: json.dumps(
-            {"name": "kursplan", "services": {"web": {"build": "."}, "db": {"image": "postgres:18"}}}
-        ),
-        (*update.COMPOSE, "ps", "--quiet", "web"): lambda: "web-container",
+        WEB_PS: lambda: "web-container",
         WEB_INSPECT: lambda: state["current"],
-        ("docker", "image", "load", "--input", str(archive)): lambda: None,
-        ("docker", "image", "inspect", RELEASE_IMAGE): lambda: json.dumps([metadata]),
-        DOCKER_PLATFORM: lambda: "linux/amd64",
         ("docker", "image", "tag", OLD_IMAGE, update.ROLLBACK_IMAGE): lambda: None,
         ("docker", "image", "tag", NEW_IMAGE, WEB_IMAGE): lambda: state.update(web_tag=NEW_IMAGE),
         ("docker", "image", "tag", OLD_IMAGE, WEB_IMAGE): lambda: state.update(web_tag=OLD_IMAGE),
         WEB_UP: lambda: state.update(current=state["web_tag"]),
         DATABASE_CHECK: lambda: None,
     }
-
-    def run(*command, capture=False):
-        return responses[command]()
-
-    docker_and_git = Mock(side_effect=run)
+    commands = Mock(side_effect=lambda *command, **kwargs: responses[command]())
     health = Mock()
-    monkeypatch.setattr(update, "run", docker_and_git)
+    monkeypatch.setattr(update, "run", commands)
     monkeypatch.setattr(update, "verify_public_health", health)
-    return state, metadata, responses, docker_and_git, health
+    return state, responses, commands, health
 
 
-def test_deploys_only_web_from_tested_image(artifact, deployment):
-    state, _, _, commands, health = deployment
+def test_deploys_only_web_from_tested_image(deployment):
+    state, _, commands, health = deployment
 
-    update.deploy(REVISION, *artifact)
+    update.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
     assert state["current"] == NEW_IMAGE
-    assert commands.call_args_list.count(call(*GIT_FETCH)) == 2
-    commands.assert_has_calls(
-        [
-            call("docker", "image", "tag", OLD_IMAGE, update.ROLLBACK_IMAGE),
-            call("docker", "image", "tag", NEW_IMAGE, WEB_IMAGE),
-            call(*WEB_UP),
-        ]
-    )
-    commands.assert_any_call(*DATABASE_CHECK, capture=True)
+    assert commands.call_args_list == [
+        call("docker", "image", "tag", OLD_IMAGE, update.ROLLBACK_IMAGE),
+        call("docker", "image", "tag", NEW_IMAGE, WEB_IMAGE),
+        call(*WEB_UP),
+        call(*WEB_PS, capture=True),
+        call(*WEB_INSPECT, capture=True),
+        call(*DATABASE_CHECK, capture=True),
+    ]
     health.assert_called_once_with()
 
 
-def test_rejects_corrupt_archive_before_git_or_docker(artifact, deployment):
-    *_, commands, health = deployment
-    artifact[0].write_bytes(b"incorrect-image")
-
-    with pytest.raises(update.DeploymentError, match="kontrollsumma stämmer inte"):
-        update.deploy(REVISION, *artifact)
-
-    commands.assert_not_called()
-    health.assert_not_called()
-
-
-def test_stale_revision_during_image_load_leaves_web_running(artifact, deployment):
-    state, _, responses, commands, health = deployment
-    heads = iter((REVISION, "d" * 40))
-    responses[GIT_HEAD] = lambda: next(heads)
-
-    with pytest.raises(update.DeploymentError, match="origin/main"):
-        update.deploy(REVISION, *artifact)
-
-    assert state["current"] == OLD_IMAGE
-    assert call(*WEB_UP) not in commands.call_args_list
-    health.assert_not_called()
-
-
-def test_compose_manifest_drift_stops_deployment(artifact, deployment):
-    state, _, responses, commands, health = deployment
-    responses[GIT_LOCAL_MANIFEST] = lambda: "different-manifest-id"
-
-    with pytest.raises(update.DeploymentError, match="skiljer sig från CI-committen"):
-        update.deploy(REVISION, *artifact)
-
-    assert state["current"] == OLD_IMAGE
-    assert call(*COMPOSE_CONFIG, capture=True) not in commands.call_args_list
-    health.assert_not_called()
-
-
-def test_rejects_development_mode_before_loading_image(artifact, deployment):
-    state, _, responses, commands, health = deployment
-    responses[COMPOSE_CONFIG] = lambda: json.dumps({"services": {"web": {"environment": {"DEV_MODE": "yes"}}}})
-
-    with pytest.raises(update.DeploymentError, match="DEV_MODE måste vara avstängt"):
-        update.deploy(REVISION, *artifact)
-
-    assert state["current"] == OLD_IMAGE
-    assert call("docker", "image", "load", "--input", str(artifact[0])) not in commands.call_args_list
-    health.assert_not_called()
-
-
-@pytest.mark.parametrize("mismatch", ["commit label", "platform"])
-def test_wrong_image_metadata_leaves_web_running(artifact, deployment, mismatch):
-    state, metadata, responses, commands, health = deployment
-    if mismatch == "commit label":
-        metadata["Config"]["Labels"] = None
-    else:
-        responses[DOCKER_PLATFORM] = lambda: "linux/arm64"
-
-    with pytest.raises(update.DeploymentError, match="commit-etiketten|matchar inte Docker-servern"):
-        update.deploy(REVISION, *artifact)
-
-    assert state["current"] == OLD_IMAGE
-    assert call(*WEB_UP) not in commands.call_args_list
-    health.assert_not_called()
-
-
 @pytest.mark.parametrize("failure", ["container health", "database", "public health"])
-def test_failed_release_restores_previous_image(artifact, deployment, failure):
-    state, _, responses, commands, health = deployment
+def test_failed_release_restores_previous_image(deployment, failure):
+    state, responses, commands, health = deployment
+
+    def fail_for_candidate(operation):
+        run = responses[operation]
+
+        def run_or_fail():
+            result = run()
+            if state["current"] == NEW_IMAGE:
+                raise subprocess.CalledProcessError(1, operation)
+            return result
+
+        responses[operation] = run_or_fail
+
     if failure == "container health":
-        up = responses[WEB_UP]
-
-        def up_fails_once():
-            up()
-            if state["current"] == NEW_IMAGE:
-                raise subprocess.CalledProcessError(1, WEB_UP)
-
-        responses[WEB_UP] = up_fails_once
+        fail_for_candidate(WEB_UP)
     elif failure == "database":
-        def database_fails_on_new_image():
-            if state["current"] == NEW_IMAGE:
-                raise subprocess.CalledProcessError(1, DATABASE_CHECK)
-
-        responses[DATABASE_CHECK] = database_fails_on_new_image
+        fail_for_candidate(DATABASE_CHECK)
     else:
         health.side_effect = [update.DeploymentError("HTTPS misslyckades"), None]
 
     with pytest.raises(update.DeploymentError, match="Föregående webimage återställdes"):
-        update.deploy(REVISION, *artifact)
+        update.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
     assert state["current"] == OLD_IMAGE
     assert commands.call_args_list.count(call(*WEB_UP)) == 2
     assert call("docker", "image", "tag", OLD_IMAGE, WEB_IMAGE) in commands.call_args_list
     assert health.call_count == (2 if failure == "public health" else 1)
-
-
-def test_repeating_same_release_keeps_previous_rollback_tag(artifact, deployment):
-    state, _, _, commands, health = deployment
-    state.update(current=NEW_IMAGE, web_tag=NEW_IMAGE)
-
-    update.deploy(REVISION, *artifact)
-
-    assert call("docker", "image", "tag", OLD_IMAGE, update.ROLLBACK_IMAGE) not in commands.call_args_list
-    assert call(*WEB_UP) not in commands.call_args_list
-    health.assert_called_once_with()
 
 
 def test_public_probe_retries_without_following_redirects_or_reusing_cache(monkeypatch):

@@ -106,17 +106,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - name: Build release image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: dockerfile
-          tags: ${{ env.KURSPLAN_IMAGE }}
-          labels: org.opencontainers.image.revision=${{ github.sha }}
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build and test with the production updater
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+
+          from update import build_and_test, export_source
+
+          revision = os.environ["GITHUB_SHA"]
+          with TemporaryDirectory(prefix="kursplan-ci-") as directory:
+              source = Path(directory) / "source"
+              export_source(revision, source)
+              build_and_test(source, revision)
+          PY
       - name: Prepare an isolated Compose stack
         id: compose
         run: |
@@ -145,24 +149,6 @@ jobs:
         run: >-
           docker run --rm --interactive --network jk_tunnel_net --env-file .env
           --entrypoint python "$KURSPLAN_IMAGE" - < tests/release_smoke.py
-      - name: Package the tested image and Compose manifest
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          mkdir release
-          docker image save "$KURSPLAN_IMAGE" | gzip -1 > release/kursplan-image.tar.gz
-          cp docker-compose.yml release/
-          cd release
-          sha256sum kursplan-image.tar.gz > kursplan-image.tar.gz.sha256
-      - name: Upload tested image for deployment
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: kursplan-image-${{ github.sha }}
-          path: release/
-          if-no-files-found: error
-          compression-level: 0
-          overwrite: true
-          retention-days: 7
       - name: Show Compose status and logs on failure
         if: failure() && steps.compose.outcome == 'success'
         run: |

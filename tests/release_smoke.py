@@ -1,4 +1,4 @@
-"""Check the CI Compose deployment from a container on the tunnel network."""
+"""Check the web image from another container on its test network."""
 
 import json
 import os
