@@ -81,3 +81,47 @@ Chromium används bara av bokningsformulärets webbläsartester. I CI installera
 den automatiskt med Playwright innan pytest körs.
 
 Om den inbyggda PostgreSQL-versionen inte finns för din plattform kan du installera `requirements.txt` och sätta `TEST_DATABASE_URL` till en separat PostgreSQL-testserver. Testanvändaren behöver rätt att skapa databaser. Testerna skapar och tar bort sina egna databaser även i det läget.
+
+## Från pull request till produktion
+
+**Kursplan CI** körs på pull requests till `main` och vid push till `main`. Jobbet
+**Release gate** kräver gröna statiska kontroller av Python, JavaScript,
+kurskatalogen och GitHub Actions, samt pytest på Python 3.12 och 3.15 med
+PostgreSQL 18, SQLite och Chromium. På pull requests granskar GitHub även nya
+sårbara beroenden. Snyk rapporterar separat i Actions och Code Scanning.
+
+CI bygger webbimagen, startar projektets faktiska Compose-konfiguration mot en
+separat PostgreSQL-instans och provar `/health`, statiska filer och en
+administratörsinloggning via nätverksaliaset som tunneln använder. När CI är
+grönt på `main` kan samma testade image driftsättas. Testrapporter, eventuella
+webbläsarspår och release-artefakten sparas i sju dagar i Actions.
+
+Aktivera **Release gate** som obligatorisk kontroll i GitHub och lägg till en
+oberoende granskare med skrivbehörighet för obligatoriska godkännanden. Följ
+[guiden för kodgranskning](.github/code-review.md) för inställningarna för `main`.
+
+### Aktivera driftsättning från GitHub
+
+1. Skapa miljön `production` under **Settings → Environments**. Tillåt enbart
+   `main` och konfigurera en oberoende godkännare om ni vill godkänna varje
+   driftsättning manuellt.
+2. Ange miljövariablerna `PRODUCTION_SSH_HOST`, `PRODUCTION_SSH_USER` och
+   `PRODUCTION_PROJECT_PATH` (absolut sökväg till befintligt Compose-projekt).
+   Ange `PRODUCTION_SSH_PORT` om värden använder annan port än 22. Lägg SSH-nyckeln
+   och värdens verifierade `known_hosts`-rad i miljöhemligheterna
+   `PRODUCTION_SSH_KEY` respektive `PRODUCTION_SSH_KNOWN_HOSTS`. Serverkontot
+   behöver komma åt projektet, dess Git-remote och Docker Compose.
+3. Kontrollera att servern kör Linux/amd64, har Python 3 och stöd för
+   `docker compose up --wait`. Produktionsprojektet behöver en körande
+   webbcontainer, den lokala `.env`-filen med `DEV_MODE=false` och samma
+   `docker-compose.yml` som CI testade. Granska och uppdatera serverns
+   Compose-fil separat vid infrastrukturändringar.
+4. Sätt repositoryvariabeln `ENABLE_PRODUCTION_DEPLOY=true` när miljön är redo.
+   Nästa godkända CI-körning för aktuell `main` startar **Deploy production**.
+
+Driftsättaren kontrollerar checksumman och committen, byter webbimagen och
+kontrollerar Compose-hälsa, PostgreSQL-anslutningen och
+`https://kursplan.se/health`. Vid fel försöker den återställa den tidigare
+webbimagen. Databasens schema och data återställs separat om en migration
+behöver backas. Säkerhetskopiera före schemaändringar.
+Se [driftkommandona](Commands.md) för omkörning.

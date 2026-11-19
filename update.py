@@ -1,64 +1,175 @@
-import os
+"""Deploy the CI-tested image to the existing Kursplan Compose project."""
+
+import argparse
+import hashlib
+import json
+import re
 import subprocess
 import sys
-from dotenv import load_dotenv
+import time
+from contextlib import closing
+from http.client import HTTPException, HTTPSConnection
+from pathlib import Path
+from uuid import uuid4
 
 
-load_dotenv()
-def is_port_available(port):
-    from http.client import HTTPConnection, HTTPException
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(1)
-        if s.connect_ex(('127.0.0.1', port)) != 0:
-            return True
+COMPOSE = ("docker", "compose", "--env-file", ".env", "-f", "docker-compose.yml")
+PUBLIC_HEALTH_HOST = "kursplan.se"
+ROLLBACK_IMAGE = "kursplan:rollback"
+DATABASE_PROBE = """\
+import os
+import psycopg
 
-    connection = HTTPConnection('127.0.0.1', port, timeout=1)
+with psycopg.connect(
+    os.environ["db_path"], connect_timeout=5, options="-c statement_timeout=5000", autocommit=True
+) as connection:
+    connection.execute("SELECT 1")
+"""
+
+
+class DeploymentError(RuntimeError):
+    pass
+
+
+def run(*command, capture=False):
+    result = subprocess.run(command, check=True, capture_output=capture, text=True)
+    return result.stdout.strip() if capture else None
+
+
+def verify_archive(archive, checksum):
+    fields = checksum.read_text(encoding="ascii").split()
+    if len(fields) != 2 or fields[1] != archive.name:
+        raise DeploymentError("Kontrollsummans filnamn stämmer inte med CI-arkivet.")
+
+    digest = hashlib.sha256()
+    with archive.open("rb") as image_file:
+        for chunk in iter(lambda: image_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    if digest.hexdigest() != fields[0]:
+        raise DeploymentError("CI-arkivets kontrollsumma stämmer inte.")
+
+
+def verify_revision(revision):
+    run("git", "fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    if run("git", "rev-parse", "--verify", "refs/remotes/origin/main", capture=True) != revision:
+        raise DeploymentError("CI-committen ligger inte längre överst på origin/main.")
+
+    tested_manifest = run("git", "rev-parse", "--verify", f"{revision}:docker-compose.yml", capture=True)
+    local_manifest = run("git", "hash-object", "--path=docker-compose.yml", "docker-compose.yml", capture=True)
+    if local_manifest != tested_manifest:
+        raise DeploymentError("Serverns docker-compose.yml skiljer sig från CI-committen.")
+
+
+def running_web_image():
+    containers = run(*COMPOSE, "ps", "--quiet", "web", capture=True).splitlines()
+    if len(containers) != 1:
+        raise DeploymentError("Exakt en körande Compose-container för web krävs för återställning.")
+    return run("docker", "inspect", "--format", "{{.Image}}", containers[0], capture=True)
+
+
+def verify_public_health():
+    for attempt in range(6):
+        try:
+            with closing(HTTPSConnection(PUBLIC_HEALTH_HOST, timeout=5)) as connection:
+                connection.request("GET", f"/health?deployment={uuid4().hex}", headers={"Cache-Control": "no-cache"})
+                with connection.getresponse() as response:
+                    if response.status == 200 and json.load(response) == {"status": "ok"}:
+                        return
+        except (HTTPException, OSError, ValueError):
+            pass
+        if attempt < 5:
+            time.sleep(3)
+    raise DeploymentError("Den publika hälsokontrollen på kursplan.se misslyckades.")
+
+
+def verify_database():
     try:
-        connection.request('GET', '/')
-        response = connection.getresponse()
-        return response.status == 200 and b'https://kursplan.se/' in response.read(65536)
-    except (OSError, HTTPException):
-        return False
-    finally:
-        connection.close()
-    
-def before_update():
-    #Check if ENV exists
-    if not os.path.exists(".env"):
-        print("Error: .env file not found. Please create a .env file before updating.")
-        sys.exit(1)
-    #Check if requirements.txt exists
-    if not os.path.exists("requirements.txt"):
-        print("Error: requirements.txt file not found. Please create a requirements.txt file before updating.")
-        sys.exit(1)
-    if not os.path.exists("docker-compose.yml"):
-        print("Error: docker-compose.yml file not found. Please create a docker-compose.yml file before updating.")
-        sys.exit(1)
-    if not os.path.exists("app.py"):
-        print("Error: app.py file not found. Please create a app.py file before updating.")
-        sys.exit(1)
-    #check if port is available
-    #if not is_port_available(int(os.getenv("app_port", 80))):
-        #print("Error: Port " + str(os.getenv("app_port", 80)) + " is not available. Please free the port before updating.")
-        #sys.exit(1)
-def update():
-    subprocess.run(["git", "pull"], check=True) #git pull
-    if not os.path.exists("venv"):
-        subprocess.run(["python3", "-m", "venv", "venv"], check=True) #python3 -m venv venv
-    python = "venv/bin/python"
-    subprocess.run([python, "-m", "ensurepip", "--upgrade"], check=True) # python -m ensurepip install --upgrade
-    subprocess.run([python, "-m", "pip", "install", "--upgrade", "pip"], check=True) # python -m pip install --upgrade pip
-    subprocess.run([python, "-m", "pip", "install", "-r", "requirements-test.txt"], check=True)
-    subprocess.run([python, "-m", "pytest", "--maxfail=1"], check=True)
-    subprocess.run(["docker", "compose", "pull"], check=True) # docker compose pull
-    subprocess.run(["docker", "compose", "down"], check=True) # docker compose down
-    subprocess.run(["docker", "compose", "rm", "-f"], check=True) # docker compose rm -f
-    subprocess.run(["docker", "compose", "up", "-d", "--build", "--force-recreate", "--remove-orphans"], check=True) # docker compose up -d --build --force-recreate --remove-orphans
-    subprocess.run(["ping", "google.com", "-c", "10"], check=True) # ping google.com -c 100    
-    subprocess.run(["ping", "kursplan.se", "-c", "10"], check=True) # ping kursplan.se -c 100
-    
-    
+        run(*COMPOSE, "exec", "-T", "web", "python", "-c", DATABASE_PROBE, capture=True)
+    except subprocess.CalledProcessError as error:
+        raise DeploymentError("Webbcontainerns anslutning till PostgreSQL kunde inte verifieras.") from error
+
+
+def start_web(image, compose_image):
+    run("docker", "image", "tag", image, compose_image)
+    run(*COMPOSE, "up", "--detach", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "120", "web")
+    if running_web_image() != image:
+        raise DeploymentError("Webbcontainern kör en annan image än den valda.")
+    verify_database()
+    verify_public_health()
+
+
+def deploy(revision, archive, checksum):
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise DeploymentError("Ange en fullständig commit-SHA från CI.")
+    if not Path(".env").is_file() or not Path("docker-compose.yml").is_file():
+        raise DeploymentError("Kör driftsättningen i produktionsprojektet med dess lokala .env-fil.")
+
+    verify_archive(archive, checksum)
+    verify_revision(revision)
+    config = json.loads(run(*COMPOSE, "config", "--format", "json", capture=True))
+    web = config["services"]["web"]
+    dev_mode = str(web.get("environment", {}).get("DEV_MODE") or "").strip().lower()
+    if dev_mode in {"1", "true", "yes", "on"}:
+        raise DeploymentError("DEV_MODE måste vara avstängt i produktionsprojektet.")
+    compose_image = web.get("image") or f"{config['name']}-web"
+    previous_image = running_web_image()
+    release_image = f"kursplan:{revision}"
+    if compose_image in (release_image, ROLLBACK_IMAGE):
+        raise DeploymentError("Compose-tjänstens image måste ha ett eget namn för driftsättning.")
+
+    run("docker", "image", "load", "--input", str(archive))
+    image = json.loads(run("docker", "image", "inspect", release_image, capture=True))[0]
+    labels = image["Config"].get("Labels") or {}
+    if labels.get("org.opencontainers.image.revision") != revision:
+        raise DeploymentError("Imagen saknar den förväntade commit-etiketten från CI.")
+    platform = f"{image['Os']}/{image['Architecture']}"
+    if platform != run("docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}", capture=True):
+        raise DeploymentError(f"CI-imagens plattform {platform} matchar inte Docker-servern.")
+
+    # Laddning kan ta tid. Kontrollera main igen innan den körande tjänsten ändras.
+    verify_revision(revision)
+    if previous_image == image["Id"]:
+        verify_database()
+        verify_public_health()
+        print(f"{revision} körs redan och svarar på /health.")
+        return
+
+    run("docker", "image", "tag", previous_image, ROLLBACK_IMAGE)
+    try:
+        start_web(image["Id"], compose_image)
+    except (DeploymentError, subprocess.CalledProcessError, OSError, KeyboardInterrupt) as error:
+        print(f"Driftsättningen misslyckades ({error}). Återställer föregående webimage.", file=sys.stderr)
+        try:
+            start_web(previous_image, compose_image)
+        except (DeploymentError, subprocess.CalledProcessError, OSError) as rollback_error:
+            raise DeploymentError(f"Återställningen kunde inte verifieras ({rollback_error}).") from rollback_error
+        raise DeploymentError("Föregående webimage återställdes och svarar på /health.") from error
+
+    print(f"{revision} körs i produktion och svarar på /health.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Driftsätt en godkänd CI-image i Kursplans Compose-projekt.")
+    parser.add_argument("revision")
+    parser.add_argument("archive", type=Path)
+    parser.add_argument("checksum", type=Path)
+    args = parser.parse_args()
+
+    # Den här låsningen körs på produktionsservern (Linux), även vid manuella omkörningar.
+    import fcntl
+
+    try:
+        lock_path = Path(run("git", "rev-parse", "--git-path", "kursplan-deploy.lock", capture=True))
+        with lock_path.open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise DeploymentError("En driftsättning pågår redan på servern.") from error
+            deploy(args.revision, args.archive, args.checksum)
+    except (DeploymentError, subprocess.CalledProcessError, OSError, ValueError) as error:
+        sys.exit(f"Driftsättning avbruten. {error}")
+
+
 if __name__ == "__main__":
-    before_update()
-    update()
+    main()

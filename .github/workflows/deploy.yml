@@ -1,0 +1,104 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [Kursplan CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Deploy tested image
+    if: >-
+      vars.ENABLE_PRODUCTION_DEPLOY == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    environment:
+      name: production
+      url: https://kursplan.se
+    concurrency:
+      group: kursplan-production
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Verify current main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ "$main_sha" != "$RELEASE_SHA" ]]; then
+            echo "CI-committen ligger inte längre överst på main." >&2
+            exit 1
+          fi
+
+      - name: Check out the reviewed deployment script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Download the image from the successful CI run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kursplan-image-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/kursplan-release
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify the tested Compose manifest
+        run: cmp docker-compose.yml "$RUNNER_TEMP/kursplan-release/docker-compose.yml"
+
+      - name: Transfer and deploy the release over SSH
+        env:
+          PRODUCTION_SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT || '22' }}
+          PRODUCTION_PROJECT_PATH: ${{ vars.PRODUCTION_PROJECT_PATH }}
+          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          : "${PRODUCTION_SSH_HOST:?Ange PRODUCTION_SSH_HOST}"
+          : "${PRODUCTION_SSH_USER:?Ange PRODUCTION_SSH_USER}"
+          : "${PRODUCTION_SSH_KEY:?Ange PRODUCTION_SSH_KEY}"
+          : "${PRODUCTION_SSH_KNOWN_HOSTS:?Ange PRODUCTION_SSH_KNOWN_HOSTS}"
+          if [[ "$PRODUCTION_PROJECT_PATH" != /* ]]; then
+            echo "PRODUCTION_PROJECT_PATH måste vara en absolut sökväg." >&2
+            exit 1
+          fi
+
+          umask 077
+          ssh_dir=$(mktemp -d)
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$PRODUCTION_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$PRODUCTION_SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+
+          remote_command=$(python3 -c 'import shlex, sys; print(shlex.join(["bash", "-c", sys.stdin.read(), "kursplan-deploy", *sys.argv[1:]]))' \
+            "$PRODUCTION_PROJECT_PATH" "$RELEASE_SHA" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          stage=$(mktemp -d)
+          trap 'rm -rf -- "$stage"' EXIT
+          tar --extract --file=- --directory="$stage"
+          cd -- "$1"
+          python3 "$stage/update.py" "$2" "$stage/kursplan-image.tar.gz" "$stage/kursplan-image.tar.gz.sha256"
+          REMOTE
+          )
+
+          tar --create --file=- update.py -C "$RUNNER_TEMP/kursplan-release" kursplan-image.tar.gz kursplan-image.tar.gz.sha256 |
+            ssh -F /dev/null -i "$ssh_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+              -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+              -p "$PRODUCTION_SSH_PORT" -l "$PRODUCTION_SSH_USER" -- "$PRODUCTION_SSH_HOST" "$remote_command"
