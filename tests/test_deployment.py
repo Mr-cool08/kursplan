@@ -32,7 +32,7 @@ def pipeline(monkeypatch):
     for name in (
         "verify_checkout", "fetch_revision", "verify_source", "production_web_image",
         "running_web_image", "export_source", "build_and_test", "run", "deploy",
-        "image_revision", "verify_database", "probe_public_health", "verify_public_health",
+        "image_revision", "verify_database",
     ):
         monkeypatch.setattr(update, name, getattr(steps, name))
 
@@ -41,7 +41,6 @@ def pipeline(monkeypatch):
     steps.production_web_image.return_value = WEB_IMAGE
     steps.running_web_image.return_value = OLD_IMAGE
     steps.build_and_test.return_value = NEW_IMAGE
-    steps.probe_public_health.return_value = None
     return steps
 
 
@@ -58,7 +57,6 @@ def test_updates_only_after_build_and_tests_pass(pipeline):
     pipeline.deploy.assert_called_once_with(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
     calls = pipeline.mock_calls
-    assert calls.index(call.probe_public_health()) < calls.index(call.export_source(REVISION, source))
     assert calls.index(call.export_source(REVISION, source)) < calls.index(call.build_and_test(source, REVISION))
     assert calls.index(call.build_and_test(source, REVISION)) < calls.index(call.run(*GIT_MERGE))
     assert calls.index(call.run(*GIT_MERGE)) < calls.index(call.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE))
@@ -75,26 +73,6 @@ def test_failure_before_rollout_leaves_production_running(pipeline, failed_step)
     pipeline.deploy.assert_not_called()
     if failed_step != "run":
         assert call.run(*GIT_MERGE) not in pipeline.mock_calls
-
-
-def test_cloudflare_challenge_stops_update_before_build(pipeline):
-    pipeline.probe_public_health.side_effect = update.DeploymentError("Cloudflare kräver en webbläsarkontroll.")
-
-    with pytest.raises(update.DeploymentError, match="Cloudflare"):
-        update.update()
-
-    pipeline.export_source.assert_not_called()
-    pipeline.build_and_test.assert_not_called()
-    pipeline.run.assert_not_called()
-    pipeline.deploy.assert_not_called()
-
-
-def test_preflight_http_error_allows_release_to_repair_app(pipeline):
-    pipeline.probe_public_health.return_value = "HTTP 502"
-
-    update.update()
-
-    pipeline.deploy.assert_called_once_with(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
 
 def test_new_main_commit_during_tests_stops_rollout(pipeline):
@@ -136,8 +114,6 @@ def test_skips_rebuilding_running_revision(pipeline):
     update.update()
 
     pipeline.verify_database.assert_called_once_with()
-    pipeline.verify_public_health.assert_called_once_with()
-    pipeline.probe_public_health.assert_not_called()
     pipeline.export_source.assert_not_called()
     pipeline.build_and_test.assert_not_called()
     pipeline.run.assert_not_called()
@@ -263,14 +239,12 @@ def deployment(monkeypatch):
         DATABASE_CHECK: lambda: None,
     }
     commands = Mock(side_effect=lambda *command, **kwargs: responses[command]())
-    health = Mock()
     monkeypatch.setattr(update, "run", commands)
-    monkeypatch.setattr(update, "verify_public_health", health)
-    return state, responses, commands, health
+    return state, responses, commands
 
 
 def test_deploys_only_web_from_tested_image(deployment):
-    state, _, commands, health = deployment
+    state, _, commands = deployment
 
     update.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
@@ -283,107 +257,25 @@ def test_deploys_only_web_from_tested_image(deployment):
         call(*WEB_INSPECT, capture=True),
         call(*DATABASE_CHECK, capture=True),
     ]
-    health.assert_called_once_with()
 
 
-@pytest.mark.parametrize("failure", ["container health", "database", "public health"])
-def test_failed_release_restores_previous_image(deployment, failure):
-    state, responses, commands, health = deployment
+@pytest.mark.parametrize("operation", [WEB_UP, DATABASE_CHECK], ids=["container health", "database"])
+def test_failed_release_restores_previous_image(deployment, operation):
+    state, responses, commands = deployment
+    run = responses[operation]
 
-    def fail_for_candidate(operation):
-        run = responses[operation]
+    def fail_for_candidate():
+        result = run()
+        if state["current"] == NEW_IMAGE:
+            raise subprocess.CalledProcessError(1, operation)
+        return result
 
-        def run_or_fail():
-            result = run()
-            if state["current"] == NEW_IMAGE:
-                raise subprocess.CalledProcessError(1, operation)
-            return result
+    responses[operation] = fail_for_candidate
 
-        responses[operation] = run_or_fail
-
-    if failure == "container health":
-        fail_for_candidate(WEB_UP)
-    elif failure == "database":
-        fail_for_candidate(DATABASE_CHECK)
-    else:
-        health.side_effect = [update.DeploymentError("HTTPS misslyckades"), None]
-
-    with pytest.raises(update.DeploymentError, match="Föregående webimage återställdes"):
+    with pytest.raises(update.DeploymentError, match="Föregående webbimage återställdes"):
         update.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
     assert state["current"] == OLD_IMAGE
     assert commands.call_args_list.count(call(*WEB_UP)) == 2
     assert call("docker", "image", "tag", OLD_IMAGE, WEB_IMAGE) in commands.call_args_list
-    assert health.call_count == (2 if failure == "public health" else 1)
-
-
-def test_rollback_reports_restored_image_when_public_probe_still_fails(deployment):
-    state, _, commands, health = deployment
-    health.side_effect = update.DeploymentError("Cloudflare kräver en webbläsarkontroll.")
-
-    with pytest.raises(update.DeploymentError, match=r"Föregående webimage körs.*Publik åtkomst.*Cloudflare"):
-        update.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
-
-    assert state["current"] == OLD_IMAGE
-    assert commands.call_args_list.count(call(*DATABASE_CHECK, capture=True)) == 2
-    assert health.call_count == 2
-
-
-def health_response(status, body, headers=None):
-    response = io.BytesIO(body)
-    response.status = status
-    response.getheader = (headers or {}).get
-    return response
-
-
-def test_public_probe_retries_without_following_redirects_or_reusing_cache(monkeypatch):
-    connection = Mock()
-    connection.getresponse.side_effect = [
-        health_response(302, b'{"status":"ok"}'),
-        health_response(200, b"<html>Gateway error</html>"),
-        health_response(200, b'{"status":"ok"}'),
-    ]
-    https = Mock(return_value=connection)
-    sleep = Mock()
-    monkeypatch.setattr(update, "HTTPSConnection", https)
-    monkeypatch.setattr(update.time, "sleep", sleep)
-
-    update.verify_public_health()
-
-    assert https.call_args_list == [call(update.PUBLIC_HEALTH_HOST, timeout=5)] * 3
-    requested_paths = []
-    for args, kwargs in connection.request.call_args_list:
-        method, path = args
-        assert method == "GET"
-        assert path.startswith("/health?deployment=")
-        assert kwargs["headers"] == {"Cache-Control": "no-cache"}
-        requested_paths.append(path)
-    assert len(set(requested_paths)) == 3
-    assert sleep.call_args_list == [call(3), call(3)]
-
-
-def test_public_probe_reports_cloudflare_challenge_with_ray_id(monkeypatch):
-    response = health_response(403, b"<html>Challenge</html>", {"CF-Mitigated": "challenge", "CF-Ray": "123-ARN"})
-    connection = Mock()
-    connection.getresponse.return_value = response
-    monkeypatch.setattr(update, "HTTPSConnection", Mock(return_value=connection))
-    sleep = Mock()
-    monkeypatch.setattr(update.time, "sleep", sleep)
-
-    with pytest.raises(update.DeploymentError, match=r"Cloudflare.*HTTP 403, CF-Ray 123-ARN"):
-        update.verify_public_health()
-
-    connection.request.assert_called_once()
-    sleep.assert_not_called()
-
-
-def test_public_probe_reports_http_status_after_retries(monkeypatch):
-    connection = Mock()
-    connection.getresponse.side_effect = [health_response(502, b"Gateway error") for _ in range(6)]
-    monkeypatch.setattr(update, "HTTPSConnection", Mock(return_value=connection))
-    monkeypatch.setattr(update.time, "sleep", Mock())
-
-    with pytest.raises(update.DeploymentError, match="HTTP 502"):
-        update.verify_public_health()
-
-    assert connection.request.call_count == 6
+    assert commands.call_args_list[-1] == call(*DATABASE_CHECK, capture=True)

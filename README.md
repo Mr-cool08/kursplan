@@ -112,16 +112,13 @@ Skriptet hämtar senaste `origin/main` och kontrollerar att de spårade filerna
 är rena och att `main` kan uppdateras med en fast-forward. Det bygger webbimagen
 och kör tester med avstängd e-post, ett tillfälligt privat Docker-nätverk och
 en egen PostgreSQL-databas. Om ett test misslyckas kör den befintliga
-webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet hälsan
-och avslutar.
+webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet
+databasanslutningen och avslutar.
 
 Efter godkända tester flyttar skriptet fram `main`, driftsätter den testade
-webbimagen i det befintliga Compose-projektet och kontrollerar Compose-hälsan,
-databasanslutningen och `https://kursplan.se/health`. Vid fel under
-driftsättningen försöker skriptet återställa föregående webbimage. Om Cloudflare
-kräver en webbläsarkontroll redan före bygget avbryts uppdateringen. Sök efter
-felmeddelandets `CF-Ray` i Cloudflare Security Events för att se vilken regel
-eller funktion som stoppar hälsokontrollen.
+webbimagen i det befintliga Compose-projektet. Skriptet inväntar den interna
+hälsokontrollen och verifierar databasanslutningen. Vid fel under driftsättningen
+försöker skriptet återställa föregående webbimage.
 
 Granska ändringar i `docker-compose.yml` separat innan de införs i produktion.
 Skriptet avbryter uppdateringen när den filen skiljer sig. Säkerhetskopiera
