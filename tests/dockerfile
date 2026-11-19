@@ -8,6 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     send_mail=0
 
+# Playwright's bundled Node.js needs libatomic to start its installer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt requirements-test.txt ./
 RUN python -m pip install --no-cache-dir -r requirements-test.txt \
     && python -m pip check \
