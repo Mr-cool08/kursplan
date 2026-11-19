@@ -1,8 +1,10 @@
 import io
+import json
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
-from unittest.mock import Mock, call
+from unittest.mock import MagicMock, Mock, call
 from uuid import UUID
 
 import pytest
@@ -117,6 +119,40 @@ def test_skips_rebuilding_running_revision(pipeline):
     pipeline.build_and_test.assert_not_called()
     pipeline.run.assert_not_called()
     pipeline.deploy.assert_not_called()
+
+
+def test_dev_mode_warns_and_resolves_web_image(monkeypatch, capsys):
+    config = {"name": "kursplan", "services": {"web": {"environment": {"DEV_MODE": " YES "}}}}
+    monkeypatch.setattr(update, "run", Mock(return_value=json.dumps(config)))
+
+    assert update.production_web_image() == WEB_IMAGE
+    warning = capsys.readouterr().err
+    assert "Varning" in warning and "DEV_MODE" in warning and "SQLite" in warning
+    assert update.production_web_image(warn_dev_mode=False) == WEB_IMAGE
+    assert capsys.readouterr().err == ""
+
+
+def test_database_probe_skips_postgresql_in_dev_mode(monkeypatch):
+    monkeypatch.setenv("DEV_MODE", " ON ")
+    monkeypatch.delenv("db_path", raising=False)
+    psycopg = Mock()
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+
+    exec(update.DATABASE_PROBE, {})
+
+    psycopg.connect.assert_not_called()
+
+
+def test_database_probe_checks_postgresql_in_production(monkeypatch):
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setenv("db_path", "postgresql://db.example.invalid/postgres")
+    psycopg = MagicMock()
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+
+    exec(update.DATABASE_PROBE, {})
+
+    psycopg.connect.assert_called_once()
+    psycopg.connect.return_value.__enter__.return_value.execute.assert_called_once_with("SELECT 1")
 
 
 @pytest.mark.parametrize("tracked_env", [False, True])

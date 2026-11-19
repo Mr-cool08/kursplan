@@ -19,14 +19,17 @@ MAIN_REF = "refs/remotes/origin/main"
 PUBLIC_HEALTH_HOST = "kursplan.se"
 ROLLBACK_IMAGE = "kursplan:rollback"
 REVISION_LABEL = "org.opencontainers.image.revision"
-DATABASE_PROBE = """\
+DEV_MODE_VALUES = ("1", "true", "yes", "on")
+DATABASE_PROBE = f"""\
 import os
-import psycopg
 
-with psycopg.connect(
-    os.environ["db_path"], connect_timeout=5, options="-c statement_timeout=5000", autocommit=True
-) as connection:
-    connection.execute("SELECT 1")
+if os.getenv("DEV_MODE", "").strip().lower() not in {DEV_MODE_VALUES!r}:
+    import psycopg
+
+    with psycopg.connect(
+        os.environ["db_path"], connect_timeout=5, options="-c statement_timeout=5000", autocommit=True
+    ) as connection:
+        connection.execute("SELECT 1")
 """
 
 
@@ -64,12 +67,15 @@ def verify_source(revision):
         raise DeploymentError("Serverns docker-compose.yml skiljer sig från origin/main. Granska infrastrukturändringen separat.")
 
 
-def production_web_image():
+def production_web_image(*, warn_dev_mode=True):
     config = json.loads(run(*COMPOSE, "config", "--format", "json", capture=True))
     web = config["services"]["web"]
     dev_mode = str(web.get("environment", {}).get("DEV_MODE") or "").strip().lower()
-    if dev_mode in {"1", "true", "yes", "on"}:
-        raise DeploymentError("DEV_MODE måste vara avstängt i produktionsprojektet.")
+    if warn_dev_mode and dev_mode in DEV_MODE_VALUES:
+        print(
+            "Varning – DEV_MODE är aktiverat. Webbappen använder en tillfällig SQLite-databas som börjar om vid omstart.",
+            file=sys.stderr,
+        )
     image = web.get("image") or f"{config['name']}-web"
     if image == ROLLBACK_IMAGE:
         raise DeploymentError("Compose-tjänstens image måste ha ett annat namn än kursplan:rollback.")
@@ -233,7 +239,7 @@ def update():
         raise DeploymentError("origin/main ändrades under testningen. Kör update.py igen för den nya committen.")
     verify_checkout()
     verify_source(revision)
-    if production_web_image() != compose_image or running_web_image() != previous_image:
+    if production_web_image(warn_dev_mode=False) != compose_image or running_web_image() != previous_image:
         raise DeploymentError("Produktionsstacken ändrades under testningen. Kör update.py igen.")
     run("git", "merge", "--ff-only", "--no-overwrite-ignore", revision)
     print("Tester godkända. Uppdaterar webbcontainern.", flush=True)

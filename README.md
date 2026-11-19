@@ -127,7 +127,8 @@ databasmigration separat.
 Servern behöver Linux, Git, Docker och Docker Compose med stöd för `up --wait`.
 Använd Python 3.11.4 eller nyare, eller en distributionsversion som har
 `tarfile.data_filter` via en säkerhetsuppdatering. Kör på `main` i den befintliga
-driftsmappen med dess `.env`, `DEV_MODE=false` och en fungerande Compose-stack.
+driftsmappen med dess `.env` och en fungerande Compose-stack. Med `DEV_MODE`
+aktiverat fortsätter driftsättningen med en varning om tillfällig SQLite-lagring.
 Serverkontot behöver åtkomst till Docker, Git-repot och de register som bygget
 och testerna använder.
 Kommandot kör kontrollerna på servern med Docker. GitHub Actions granskar
