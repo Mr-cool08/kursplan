@@ -170,19 +170,37 @@ def image_revision(image):
     )
 
 
+def probe_public_health() -> str | None:
+    """Return a failed probe's detail or raise if Cloudflare sends a challenge."""
+    try:
+        with closing(HTTPSConnection(PUBLIC_HEALTH_HOST, timeout=5)) as connection:
+            connection.request("GET", f"/health?deployment={uuid4().hex}", headers={"Cache-Control": "no-cache"})
+            with connection.getresponse() as response:
+                if response.getheader("CF-Mitigated") == "challenge":
+                    ray_id = response.getheader("CF-Ray", "saknas")
+                    raise DeploymentError(
+                        f"Cloudflare kräver en webbläsarkontroll för https://{PUBLIC_HEALTH_HOST}/health "
+                        f"(HTTP {response.status}, CF-Ray {ray_id}). Sök efter anropet i Cloudflare Security Events."
+                    )
+                if response.status != 200:
+                    return f"HTTP {response.status}"
+                try:
+                    payload = json.load(response)
+                except ValueError:
+                    return "HTTP 200 med ogiltig JSON"
+                return None if payload == {"status": "ok"} else "HTTP 200 med oväntat JSON-svar"
+    except (HTTPException, OSError) as error:
+        return f"HTTPS-anropet gav {type(error).__name__}"
+
+
 def verify_public_health():
     for attempt in range(6):
-        try:
-            with closing(HTTPSConnection(PUBLIC_HEALTH_HOST, timeout=5)) as connection:
-                connection.request("GET", f"/health?deployment={uuid4().hex}", headers={"Cache-Control": "no-cache"})
-                with connection.getresponse() as response:
-                    if response.status == 200 and json.load(response) == {"status": "ok"}:
-                        return
-        except (HTTPException, OSError, ValueError):
-            pass
+        problem = probe_public_health()
+        if problem is None:
+            return
         if attempt < 5:
             time.sleep(3)
-    raise DeploymentError("Den publika hälsokontrollen på kursplan.se misslyckades.")
+    raise DeploymentError(f"Den publika hälsokontrollen på {PUBLIC_HEALTH_HOST} misslyckades ({problem}).")
 
 
 def verify_database():
@@ -198,19 +216,26 @@ def start_web(image, compose_image):
     if running_web_image() != image:
         raise DeploymentError("Webbcontainern kör en annan image än den valda.")
     verify_database()
-    verify_public_health()
 
 
 def deploy(tested_image, compose_image, previous_image):
     run("docker", "image", "tag", previous_image, ROLLBACK_IMAGE)
     try:
         start_web(tested_image, compose_image)
+        verify_public_health()
     except (DeploymentError, subprocess.CalledProcessError, OSError, KeyboardInterrupt) as error:
         print(f"Driftsättningen misslyckades ({error}). Återställer föregående webimage.", file=sys.stderr)
         try:
             start_web(previous_image, compose_image)
         except (DeploymentError, subprocess.CalledProcessError, OSError) as rollback_error:
             raise DeploymentError(f"Återställningen kunde inte verifieras ({rollback_error}).") from rollback_error
+        try:
+            verify_public_health()
+        except DeploymentError as health_error:
+            raise DeploymentError(
+                f"Föregående webimage körs och klarade de interna kontrollerna. "
+                f"Publik åtkomst kunde inte verifieras. {health_error}"
+            ) from health_error
         raise DeploymentError("Föregående webimage återställdes och svarar på /health.") from error
 
 
@@ -228,6 +253,10 @@ def update():
         verify_public_health()
         print(f"{revision} körs redan och svarar på /health.")
         return
+
+    # A Cloudflare challenge already present on the current release will also
+    # block the deployment probe. Other errors may be fixed by the new release.
+    probe_public_health()
 
     print(f"Förbereder {revision} från origin/main.", flush=True)
     with TemporaryDirectory(prefix="kursplan-update-") as directory:

@@ -118,8 +118,12 @@ och avslutar.
 Efter godkända tester flyttar skriptet fram `main`, driftsätter den testade
 webbimagen i det befintliga Compose-projektet och kontrollerar Compose-hälsan,
 databasanslutningen och `https://kursplan.se/health`. Vid fel under
-driftsättningen försöker skriptet återställa föregående webbimage. Granska
-ändringar i `docker-compose.yml` separat innan de införs i produktion.
+driftsättningen försöker skriptet återställa föregående webbimage. Om Cloudflare
+kräver en webbläsarkontroll redan före bygget avbryts uppdateringen. Sök efter
+felmeddelandets `CF-Ray` i Cloudflare Security Events för att se vilken regel
+eller funktion som stoppar hälsokontrollen.
+
+Granska ändringar i `docker-compose.yml` separat innan de införs i produktion.
 Skriptet avbryter uppdateringen när den filen skiljer sig. Säkerhetskopiera
 databasen före schemaändringar och hantera eventuell återställning av en
 databasmigration separat.
