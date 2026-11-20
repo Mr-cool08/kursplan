@@ -2,11 +2,44 @@
 
 ## Kör appen i utvecklingsläge
 
-Sätt `DEV_MODE=true` i `.env` och starta appen med `python app.py`. Det aktiverar debugloggar och skapar en tom SQLite-fil i systemets temporära katalog. Sökvägen visas i startloggen. Filen tas bort när appen avslutas normalt, så varje start börjar med en ny databas.
+Sätt `DEV_MODE=true` i `.env` och starta appen med `python app.py`. Det aktiverar debugloggar och försöker först använda den beständiga PostgreSQL-databasen i `db_path`, med fem sekunders anslutningstimeout. Då finns konton och bokningar kvar mellan omstarter, och ändringar sparas i den konfigurerade databasen.
 
-Ange `test_email` och `test_password` i `.env` om du vill att appen skapar en administratör vid start. Sätt `send_mail=0` om du vill testa bokningar utan att skicka bekräftelser.
+Om `db_path` saknas, är ogiltig eller databasen inte går att ansluta till faller appen tillbaka till en tom SQLite-fil direkt i projektets rot, bredvid `app.py`. Filen heter `kursplan-dev-<slumpmässigt namn>.db` och får ett unikt namn vid varje start. Startloggen visar en varning och filens sökväg. Filen tas bort när appen avslutas normalt, så reservdatabasen börjar tom vid varje start. Fel i exempelvis databasens schema avbryter fortfarande starten och döljs inte av reservlösningen.
 
-Med `DEV_MODE=false` eller utan inställningen använder appen PostgreSQL via `db_path`.
+### Inloggning i utvecklingsläget
+
+I utvecklingsläget skapas automatiskt två konton. Båda loggar in via `/login`; administratören kommer till administratörsöversikten och standardanvändaren till kundens dashboard.
+
+| Konto | Förvald e-post | Inställningar i `.env` | Nyckel i kontofilen |
+| --- | --- | --- | --- |
+| Administratör | `admin@example.invalid` | `test_email`, `test_password` | `admin` |
+| Standardanvändare | `user@example.invalid` | `dev_user_email`, `dev_user_password` | `user` |
+
+Det finns inget gemensamt standardlösenord. Om ett lösenord varken har angetts i miljön eller sparats tidigare genereras ett separat slumpmässigt lösenord för kontot. Inställningar i miljön, exempelvis från `.env`, har företräde framför sparade uppgifter och förvalda adresser.
+
+Inloggningsuppgifterna sparas i `.dev-accounts.json` bredvid `app.py`. Filen ignoreras av Git och återanvänds mellan omstarter, även när SQLite-databasen skapas om. Startloggen visar filens sökväg utan att skriva ut lösenorden. Dela eller versionshantera inte filen. Nya utvecklingskontons lösenord lagras hashade i databasen.
+
+För att se de aktuella lokala inloggningsuppgifterna, öppna filen och läs `email` och `password` under `admin` respektive `user`. I PowerShell, från projektets rot:
+
+```powershell
+Get-Content .dev-accounts.json
+```
+
+Befintliga databaskonton med samma e-postadress behåller sina uppgifter och sin roll. Att ändra `.env` eller kontofilen återställer därför inte deras lösenord. Kontona skapas i den databas som utvecklingsläget använder. Sätt `send_mail=0` om du vill testa bokningar utan att skicka bekräftelser.
+
+Vid utveckling i Docker finns `.dev-accounts.json` inne i webbcontainern. Använd kontoinställningarna i `.env` om inloggningsuppgifterna ska finnas kvar även när containern ersätts.
+
+```console
+docker compose exec web cat /app/.dev-accounts.json
+```
+
+### Exempelbokningar
+
+Den vanliga utvecklingsanvändaren får också fyra exempelbokningar: två väntande förfrågningar, en accepterad och en avbokad. Exemplen visar exakt datum, datumintervall, egen utbildning, frivillig ort och olika lokalval. De syns både i kundens dashboard och administratörsöversikten; där visas accepterade och avbokade poster via filtren. Inga mejl skickas när exemplen skapas.
+
+Exemplen skapas en gång per utvecklingsanvändare och databas. En separat tabell, `dev_booking_seeds`, skapas automatiskt i utvecklingsläget och håller reda på detta. Omstarter ändrar inte befintliga bokningar och återställer inte exempel som du har redigerat, avbokat eller tagit bort. En ny tillfällig SQLite-databas får nya exempel. Med `DEV_MODE=false` skapas varken exempelbokningar eller markörtabellen.
+
+Med `DEV_MODE=false` eller utan inställningen använder appen PostgreSQL via `db_path` och skapar inga utvecklingskonton. Den befintliga administratörsinställningen `test_email`/`test_password` används som tidigare.
 
 ## Databasuppgradering för bokningsönskemål
 
@@ -129,7 +162,8 @@ Servern behöver Linux, Git, Docker och Docker Compose med stöd för `up --wait
 Använd Python 3.11.4 eller nyare, eller en distributionsversion som har
 `tarfile.data_filter` via en säkerhetsuppdatering. Kör på `main` i den befintliga
 driftsmappen med dess `.env` och en fungerande Compose-stack. Med `DEV_MODE`
-aktiverat fortsätter driftsättningen med en varning om tillfällig SQLite-lagring.
+aktiverat fortsätter driftsättningen med en varning om att appen kan falla tillbaka
+till tillfällig SQLite-lagring om den konfigurerade databasen inte kan nås.
 Serverkontot behöver åtkomst till Docker, Git-repot och de register som bygget
 och testerna använder.
 Kommandot kör kontrollerna på servern med Docker. GitHub Actions granskar

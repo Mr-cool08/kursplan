@@ -23,13 +23,18 @@ CUSTOMER_PASSWORD = "release-customer-test-password"
 def app_url(monkeypatch, project_root):
     monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     monkeypatch.setenv("DEV_MODE", "true")
+    monkeypatch.setenv("db_path", "")
     monkeypatch.setenv("app_secret_key", "release-browser-test-key")
     monkeypatch.setenv("test_email", ADMIN_EMAIL)
     monkeypatch.setenv("test_password", ADMIN_PASSWORD)
     monkeypatch.setenv("send_mail", "0")
 
-    app_globals = run_path(str(project_root / "app.py"))
-    with app_globals["dev_database_dir"]:
+    with patch("dev_accounts.load_dev_accounts", return_value={
+        "admin": {"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        "user": {"email": "release-dev-user@example.com", "password": "release-dev-user-test-password"},
+    }):
+        app_globals = run_path(str(project_root / "app.py"))
+    with app_globals["dev_database_file"]:
         with make_server("127.0.0.1", 0, app_globals["app"]) as server:
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -84,13 +89,13 @@ def test_customer_and_admin_booking_lifecycle_in_browser(page, new_context, app_
     _submit_request(page, confirmed_course, start, end)
     _submit_request(page, cancelled_course, start, end)
 
-    customer_row = page.get_by_role("row").filter(has_text=confirmed_course)
-    expect(customer_row.get_by_text("Väntar")).to_be_visible()
-    expect(customer_row.get_by_text(f"{start} – {end}")).to_be_visible()
-    cancelled_row = page.get_by_role("row").filter(has_text=cancelled_course)
-    cancelled_row.get_by_role("button", name="Avbryt").click()
-    expect(cancelled_row.get_by_text("Avbruten")).to_be_visible()
-    expect(cancelled_row.get_by_role("button", name="Avbryt")).to_have_count(0)
+    customer_card = page.get_by_role("article").filter(has_text=confirmed_course)
+    expect(customer_card.get_by_text("Väntar")).to_be_visible()
+    expect(customer_card.get_by_text(f"{start} – {end}")).to_be_visible()
+    cancelled_card = page.get_by_role("article").filter(has_text=cancelled_course)
+    cancelled_card.get_by_role("button", name="Avbryt").click()
+    expect(cancelled_card.get_by_text("Avbruten")).to_be_visible()
+    expect(cancelled_card.get_by_role("button", name="Avbryt")).to_have_count(0)
 
     admin = new_context().new_page()
     _log_in(admin, app_url, ADMIN_EMAIL, ADMIN_PASSWORD)
@@ -113,10 +118,10 @@ def test_customer_and_admin_booking_lifecycle_in_browser(page, new_context, app_
     expect(admin.get_by_role("row").filter(has_text=cancelled_course)).to_contain_text("Avbruten")
 
     page.reload()
-    expect(customer_row.get_by_text("Accepterad")).to_be_visible()
-    expect(customer_row.get_by_text(end, exact=True)).to_be_visible()
-    expect(customer_row.get_by_text("Uppsala")).to_be_visible()
-    expect(customer_row.get_by_role("button", name="Avbryt")).to_have_count(0)
+    expect(customer_card.get_by_text("Accepterad")).to_be_visible()
+    expect(customer_card.get_by_text(end, exact=True)).to_be_visible()
+    expect(customer_card.get_by_text("Uppsala")).to_be_visible()
+    expect(customer_card.get_by_role("button", name="Avbryt")).to_have_count(0)
 
 
 @pytest.fixture

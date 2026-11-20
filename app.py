@@ -7,10 +7,13 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile
 
 from dotenv import load_dotenv
+from psycopg import OperationalError, ProgrammingError
+from psycopg.conninfo import make_conninfo
 import database
+from dev_accounts import load_dev_accounts
 from users import user_page
 from admin import admin_page
 
@@ -21,17 +24,13 @@ dev_mode = os.getenv("DEV_MODE", "").strip().lower() in {"1", "true", "yes", "on
 app = Flask(__name__)
 app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
 app.config["DEV_MODE"] = dev_mode
+app.config["DB_PATH"] = os.getenv("db_path")
 
 if dev_mode:
-    dev_database_dir = TemporaryDirectory(prefix="kursplan-dev-")
-    app.config["DB_PATH"] = Path(dev_database_dir.name) / "database.db"
     app.secret_key = app.secret_key or database.generate_secret_key()
     app.logger.setLevel(logging.DEBUG)
-else:
-    db_path = os.getenv("db_path")
-    if not db_path:
-        raise ValueError("Database path is not set in the .env file.")
-    app.config["DB_PATH"] = db_path
+elif not app.config["DB_PATH"]:
+    raise ValueError("Database path is not set in the .env file.")
 
 app.register_blueprint(user_page)
 app.register_blueprint(admin_page)
@@ -41,15 +40,58 @@ def initialize_database():
     db_path = app.config["DB_PATH"]
     database.create_database(db_path)
 
-    email = os.getenv("test_email")
-    password = os.getenv("test_password")
-    if not dev_mode or (email and password):
-        database.ensure_test_user(email=email, password=password, db_path=db_path)
+    if dev_mode:
+        accounts_path = Path(__file__).with_name(".dev-accounts.json")
+        accounts = load_dev_accounts(accounts_path)
+        database.ensure_dev_users(
+            accounts["admin"]["email"], accounts["admin"]["password"],
+            accounts["user"]["email"], accounts["user"]["password"], db_path,
+        )
+        booking_ids = database.ensure_dev_bookings(accounts["user"]["email"], db_path)
+        app.logger.debug("Utvecklingsläge: skapade %s exempelbokningar.", len(booking_ids))
+        app.logger.debug("Utvecklingskontonas inloggningsuppgifter finns i %s", accounts_path)
+    else:
+        database.ensure_test_user(
+            email=os.getenv("test_email"), password=os.getenv("test_password"), db_path=db_path,
+        )
+
+
+def initialize_dev_database():
+    if app.config["DB_PATH"]:
+        try:
+            app.config["DB_PATH"] = make_conninfo(
+                app.config["DB_PATH"], connect_timeout=5
+            )
+        except ProgrammingError:
+            # Invalid connection settings also allow the local fallback.
+            pass
+        else:
+            try:
+                initialize_database()
+            except OperationalError:
+                pass
+            else:
+                app.logger.debug(
+                    "Utvecklingsläge: använder den konfigurerade PostgreSQL-databasen."
+                )
+                return None
+
+    app.logger.warning(
+        "Utvecklingsläge: den konfigurerade databasen saknas eller kan inte nås. "
+        "Använder en temporär SQLite-fil som tas bort vid normalt avslut."
+    )
+    temporary_file = NamedTemporaryFile(
+        prefix="kursplan-dev-", suffix=".db",
+        dir=Path(__file__).resolve().parent, delete_on_close=False,
+    )
+    app.config["DB_PATH"] = Path(temporary_file.name)
+    initialize_database()
+    app.logger.debug("Temporär SQLite-databas: %s", app.config["DB_PATH"])
+    return temporary_file
 
 
 if dev_mode:
-    initialize_database()
-    app.logger.debug("Development mode enabled. SQLite database: %s", app.config["DB_PATH"])
+    dev_database_file = initialize_dev_database()
 
 
 @app.route('/logout')
@@ -289,4 +331,4 @@ if __name__ == '__main__':
         initialize_database()
     port = int(os.environ.get("app_port", 80))
     host = os.environ.get("app_host", "0.0.0.0")
-    app.run(port=port, host=host, use_reloader=False)
+    app.run(port=port, host=host, use_reloader=False, debug=dev_mode)

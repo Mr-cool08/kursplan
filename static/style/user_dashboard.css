@@ -1,0 +1,343 @@
+/* Loaded only by the customer dashboard; admin keeps dashboard.css. */
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100svh;
+    background: #f3f5f8;
+    color: #1b2b43;
+}
+
+.site-header {
+    border-bottom: 1px solid #dfe5ee;
+}
+
+footer {
+    position: static;
+    width: auto;
+    padding: 16px 20px;
+    background: #f3f5f8;
+    overflow-wrap: anywhere;
+}
+
+.user-dashboard,
+.user-dashboard * {
+    box-sizing: border-box;
+}
+
+.user-dashboard {
+    flex: 1;
+    width: 100%;
+    padding: clamp(28px, 5vw, 64px) 20px 32px;
+}
+
+.user-dashboard .dashboard-container {
+    width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+}
+
+.user-dashboard .dashboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid #d7dfea;
+}
+
+.user-dashboard .dashboard-header > div {
+    min-width: 0;
+}
+
+.user-dashboard .dashboard-kicker {
+    margin: 0 0 8px;
+    color: #315db5;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.user-dashboard h1 {
+    margin: 0;
+    color: #182b48;
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    line-height: 1.2;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.user-dashboard .dashboard-intro {
+    max-width: 48ch;
+    margin: 12px 0 0;
+    color: #52617a;
+    font-size: 1rem;
+    line-height: 1.6;
+}
+
+.user-dashboard .bookings-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin: 30px 0 18px;
+}
+
+.user-dashboard h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.4;
+}
+
+.user-dashboard .booking-count {
+    color: #52617a;
+    font-size: 0.875rem;
+}
+
+.user-dashboard .booking-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+}
+
+.user-dashboard .booking-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: clamp(20px, 3vw, 28px);
+    border: 1px solid #d7dfea;
+    border-radius: 16px;
+    background: #fefefe;
+    overflow-wrap: anywhere;
+}
+
+.user-dashboard .booking-card-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin-bottom: 20px;
+}
+
+.user-dashboard .booking-reference {
+    color: #52617a;
+    font-size: 0.8125rem;
+}
+
+.user-dashboard .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.user-dashboard .status-pill::before {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    content: "";
+}
+
+.user-dashboard .pending {
+    background: #fff3d9;
+    color: #815111;
+}
+
+.user-dashboard .accepted {
+    background: #e7f3eb;
+    color: #21613d;
+}
+
+.user-dashboard .cancelled {
+    background: #fbeceb;
+    color: #963d38;
+}
+
+.user-dashboard .booking-card h3 {
+    margin: 0 0 24px;
+    color: #182b48;
+    font-size: 1.25rem;
+    line-height: 1.4;
+}
+
+.user-dashboard .booking-details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 24px;
+    margin: 0;
+}
+
+.user-dashboard .booking-details > div {
+    min-width: 0;
+}
+
+.user-dashboard .booking-detail-wide {
+    grid-column: 1 / -1;
+}
+
+.user-dashboard dt {
+    margin-bottom: 5px;
+    color: #52617a;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+}
+
+.user-dashboard dd {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.5;
+}
+
+.user-dashboard .booking-card-actions {
+    margin-top: auto;
+    padding-top: 24px;
+}
+
+.user-dashboard .booking-card form {
+    display: flex;
+    justify-content: flex-end;
+    max-width: none;
+    margin: 0;
+    padding: 16px 0 0;
+    border-top: 1px solid #e4e9f1;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.user-dashboard .dashboard-button,
+.user-dashboard .cancel-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 11px 18px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 700;
+    line-height: 1.4;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.user-dashboard .dashboard-button.primary {
+    flex-shrink: 0;
+    gap: 10px;
+    background: #2458b8;
+    color: #fefefe;
+}
+
+.user-dashboard .primary > span {
+    font-size: 1.4rem;
+    font-weight: 400;
+    line-height: 1;
+}
+
+.user-dashboard .dashboard-button.primary:hover {
+    background: #1b4594;
+}
+
+.user-dashboard .dashboard-button.secondary {
+    border-color: #cbd6e5;
+    background: transparent;
+    color: #284773;
+}
+
+.user-dashboard .dashboard-button.secondary:hover {
+    border-color: #8399b8;
+    background: #e8eef6;
+}
+
+.user-dashboard .cancel-button {
+    border-color: #e6c8c5;
+    background: transparent;
+    color: #963d38;
+}
+
+.user-dashboard .cancel-button:hover {
+    border-color: #c68c86;
+    background: #fbeceb;
+}
+
+.user-dashboard a:focus-visible,
+.user-dashboard button:focus-visible {
+    outline: 3px solid #2458b8;
+    outline-offset: 4px;
+}
+
+.user-dashboard .dashboard-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 28px;
+}
+
+.user-dashboard .empty-state {
+    padding: clamp(28px, 5vw, 48px) 24px;
+    border: 1px dashed #a9b9ce;
+    border-radius: 16px;
+    background: #f9fbfd;
+    text-align: center;
+}
+
+.user-dashboard .empty-state h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.4;
+}
+
+.user-dashboard .empty-state p {
+    margin: 12px 0 24px;
+    color: #52617a;
+    line-height: 1.6;
+}
+
+@media (min-width: 48rem) {
+    .user-dashboard .booking-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 40rem) {
+    .user-dashboard {
+        padding-right: 16px;
+        padding-left: 16px;
+    }
+
+    .user-dashboard .dashboard-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 20px;
+        padding-bottom: 24px;
+    }
+
+    .user-dashboard .dashboard-button,
+    .user-dashboard .cancel-button {
+        width: 100%;
+    }
+
+    .user-dashboard .booking-card form {
+        display: block;
+    }
+
+    .user-dashboard .dashboard-actions {
+        display: block;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .user-dashboard .dashboard-button,
+    .user-dashboard .cancel-button {
+        transition: none;
+    }
+}

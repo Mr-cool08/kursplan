@@ -1,9 +1,11 @@
 from contextlib import closing, contextmanager
+from datetime import date, timedelta
 from pathlib import Path
 import secrets
 import sqlite3
 
 import psycopg
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 _LEGACY_BOOKING_SELECT = """
@@ -348,16 +350,136 @@ def ensure_test_user(email, password, db_path):
         )
 
 
+def ensure_dev_users(admin_email, admin_password, user_email, user_password, db_path):
+    """Create development accounts without changing existing account details."""
+    admin_email = admin_email.strip()
+    user_email = user_email.strip()
+    if admin_email.casefold() == user_email.casefold():
+        raise ValueError("Utvecklingskontona måste ha olika e-postadresser.")
+
+    accounts = (
+        ("Utvecklingsadministratör", admin_email, admin_password, "admin"),
+        ("Utvecklingsanvändare", user_email, user_password, "user"),
+    )
+    with _cursor(db_path) as cursor:
+        for name, email, password, role in accounts:
+            _execute(
+                cursor,
+                "INSERT INTO users (name, email, password, organization_number, role) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (email) DO NOTHING",
+                (name, email, generate_password_hash(password), "0000000000", role),
+            )
+
+
+def ensure_dev_bookings(user_email, db_path):
+    """Create sample bookings once per development customer without sending mail."""
+    with _cursor(db_path) as cursor:
+        _execute(
+            cursor,
+            "SELECT id, name, organization_number FROM users "
+            "WHERE email = %s AND role = 'user'",
+            (user_email,),
+        )
+        user = cursor.fetchone()
+        if user is None:
+            return []
+
+        # This table is only created in development mode. The marker and all
+        # bookings share one transaction, including when startup is retried.
+        _execute(
+            cursor,
+            "CREATE TABLE IF NOT EXISTS dev_booking_seeds ("
+            "user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE)",
+        )
+        _execute(
+            cursor,
+            "INSERT INTO dev_booking_seeds (user_id) VALUES (%s) "
+            "ON CONFLICT (user_id) DO NOTHING RETURNING user_id",
+            (user[0],),
+        )
+        if cursor.fetchone() is None:
+            return []
+
+        today = date.today()
+
+        def future_date(days):
+            return (today + timedelta(days=days)).isoformat()
+
+        samples = (
+            {
+                "utbildning": "HLR", "utbildningskalla": "katalog", "antal": 8,
+                "datumtyp": "exakt", "onskat_datum": future_date(30),
+                "onskad_ort": "Stockholm", "lokalansvar": "kund",
+                "lokaladress": "Exempelgatan 1, Stockholm", "status": "pending",
+            },
+            {
+                "utbildning": "Exempel: Anpassad säkerhetsutbildning",
+                "utbildningskalla": "fritext", "antal": 12,
+                "datumtyp": "intervall", "onskat_startdatum": future_date(45),
+                "onskat_slutdatum": future_date(49), "status": "pending",
+            },
+            {
+                "utbildning": "Heta arbeten", "utbildningskalla": "katalog", "antal": 6,
+                "datumtyp": "intervall", "onskat_startdatum": future_date(14),
+                "onskat_slutdatum": future_date(18), "onskad_ort": "Göteborg",
+                "faststallt_datum": future_date(16), "faststalld_ort": "Göteborg",
+                "status": "accepted",
+            },
+            {
+                "utbildning": "Första hjälpen", "utbildningskalla": "katalog", "antal": 10,
+                "datumtyp": "exakt", "onskat_datum": future_date(60),
+                "onskad_ort": "Malmö", "status": "cancelled",
+            },
+        )
+        booking_ids = []
+        for sample in samples:
+            booking = dict.fromkeys(_BOOKING_DETAIL_COLUMNS[1:])
+            booking.update(
+                name=user[1], email=user_email, organization_number=user[2],
+                lokalansvar="sakerhetsutbildarna",
+            )
+            booking.update(sample)
+            booking["datum"] = (
+                booking["onskat_datum"] if booking["datumtyp"] == "exakt"
+                else f"{booking['onskat_startdatum']} – {booking['onskat_slutdatum']}"
+            )
+            booking["ort"] = booking["onskad_ort"]
+            booking["lokal"] = (
+                booking["lokaladress"] if booking["lokalansvar"] == "kund"
+                else "Säkerhetsutbildarna ordnar lokalen"
+            )
+            booking_ids.append(_insert_booking(cursor, tuple(booking), tuple(booking.values())))
+        return booking_ids
+
+
 def authenticate_user(email, password, db_path):
     """Authenticate a user and return the database-backed account role."""
     with _cursor(db_path) as cursor:
         _execute(
             cursor,
-            "SELECT id, name, organization_number, email, role FROM users "
-            "WHERE email = %s AND password = %s",
-            (email, password),
+            "SELECT id, name, organization_number, email, role, password FROM users "
+            "WHERE email = %s",
+            (email,),
         )
-        return cursor.fetchone()
+        user = cursor.fetchone()
+
+    if user is None:
+        return None
+    stored_password = user[5]
+    if (
+        stored_password.startswith(("scrypt:", "pbkdf2:"))
+        and stored_password.count("$") == 2
+    ):
+        try:
+            valid = check_password_hash(stored_password, password)
+        except ValueError:
+            valid = False
+    else:
+        # Existing accounts remain usable until a separate password migration.
+        valid = secrets.compare_digest(
+            stored_password.encode("utf-8"), password.encode("utf-8")
+        )
+    return user[:5] if valid else None
 
 
 def login_user(email, password, role, db_path):

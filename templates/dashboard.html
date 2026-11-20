@@ -1,79 +1,88 @@
 {% extends "base.html" %}
-{% block title %}Hem{% endblock %}
+{% block title %}Dina bokningar{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='style/dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
 {% endblock %}
 
 {% block content %}
-<div class="home-hero-container">
-  <img src="{{ url_for('static', filename='images/6db5e7cf-5403-41be-a14c-a5824d08f610.png') }}" alt="kursplan" class="home-hero">
-
+<main class="user-dashboard">
   <div class="dashboard-container">
-    <div class="dashboard-header">
+    <header class="dashboard-header">
       <div>
         <p class="dashboard-kicker">Välkommen</p>
         <h1>{{ name }}</h1>
+        <p class="dashboard-intro">Här följer du dina utbildningsförfrågningar och bokningar.</p>
       </div>
-      <a href="{{ url_for(request.blueprint + '.booking') }}" class="dashboard-button primary">
+      <a href="{{ url_for('user_page.booking') }}" class="dashboard-button primary">
+        <span aria-hidden="true">+</span>
         Gör ny bokning
-    </a>
-    </div>
+      </a>
+    </header>
 
-    <h2>Dina bokningar</h2>
+    <section class="dashboard-bookings" aria-labelledby="bookings-heading">
+      <div class="bookings-heading">
+        <h2 id="bookings-heading">Dina bokningar</h2>
+        {% if bookings %}
+        <span class="booking-count">{{ bookings|length }} {% if bookings|length == 1 %}bokning{% else %}bokningar{% endif %}</span>
+        {% endif %}
+      </div>
 
-    {% if bookings %}
-    <div class="table-container">
-      <table class="dashboard-table">
-        <thead>
-          <tr>
-            <th>Utbildning</th>
-            <th>Antal</th>
-            <th>Ort</th>
-            <th>Datum</th>
-            <th>lokal</th>
-            <th>Status</th>
-            <th>Åtgärd</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for b in bookings %}
-          <tr>
-            <td>{{ b[4] }}</td>
-            <td>{{ b[5] }}</td>
-            <td>{{ b[6] }}</td>
-            <td>{{ b[8] }}</td>
-            <td>{{ b[7] }}</td>
-            <td>
-              {% if b[9] == 'pending' %}
-                <span class="status-pill pending">Väntar</span>
-              {% elif b[9] == 'accepted' %}
-                <span class="status-pill accepted">Accepterad</span>
-              {% else %}
-                <span class="status-pill cancelled">Avbruten</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if b[9] == 'pending' %}
-              <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="cancel-button">Avbryt</button>
-              </form>
-              {% else %}
-              <span class="table-action-muted">-</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="empty-state">Du har inga bokningar ännu.</p>
-    {% endif %}
+      {% if bookings %}
+      <div class="booking-grid">
+        {% for b in bookings %}
+        <article class="booking-card" aria-labelledby="booking-title-{{ b[0] }}">
+          <div class="booking-card-topline">
+            <span class="booking-reference">Bokning #{{ b[0] }}</span>
+            {% if b[9] == 'pending' %}
+            <span class="status-pill pending">Väntar</span>
+            {% elif b[9] == 'accepted' %}
+            <span class="status-pill accepted">Accepterad</span>
+            {% else %}
+            <span class="status-pill cancelled">Avbruten</span>
+            {% endif %}
+          </div>
+          <h3 id="booking-title-{{ b[0] }}">{{ b[4] }}</h3>
+          <dl class="booking-details">
+            <div class="booking-detail-wide">
+              <dt>Datum</dt>
+              <dd>{{ b[8] or 'Inte angivet' }}</dd>
+            </div>
+            <div>
+              <dt>Antal deltagare</dt>
+              <dd>{{ b[5] }}</dd>
+            </div>
+            <div>
+              <dt>Ort</dt>
+              <dd>{{ b[6] or 'Inte angiven' }}</dd>
+            </div>
+            <div class="booking-detail-wide">
+              <dt>Lokal</dt>
+              <dd>{{ b[7] or 'Inte angiven' }}</dd>
+            </div>
+          </dl>
+          {% if b[9] == 'pending' %}
+          <div class="booking-card-actions">
+            <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="cancel-button" aria-describedby="booking-title-{{ b[0] }}">Avbryt</button>
+            </form>
+          </div>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <h3>Du har inga bokningar ännu.</h3>
+        <p>Skicka en förfrågan om en utbildning så visas den här.</p>
+        <a href="{{ url_for('user_page.booking') }}" class="dashboard-button secondary">Hitta din utbildning</a>
+      </div>
+      {% endif %}
+    </section>
 
     <div class="dashboard-actions">
       <a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a>
     </div>
   </div>
-</div>
+</main>
 {% endblock %}

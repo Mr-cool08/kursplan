@@ -1,7 +1,9 @@
 .env
+.dev-accounts.json
 .git
 .gitignore
 database.db
+kursplan-dev-*.db*
 __pycache__/
 *.py[cod]
 .pytest_cache/

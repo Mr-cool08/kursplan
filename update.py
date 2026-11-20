@@ -70,7 +70,8 @@ def production_web_image(*, warn_dev_mode=True):
     dev_mode = str(web.get("environment", {}).get("DEV_MODE") or "").strip().lower()
     if warn_dev_mode and dev_mode in DEV_MODE_VALUES:
         print(
-            "Varning – DEV_MODE är aktiverat. Webbappen använder en tillfällig SQLite-databas som börjar om vid omstart.",
+            "Varning – DEV_MODE är aktiverat. Om den konfigurerade databasen inte kan nås "
+            "använder webbappen en tillfällig SQLite-databas som börjar om vid omstart.",
             file=sys.stderr,
         )
     image = web.get("image") or f"{config['name']}-web"
