@@ -12,7 +12,36 @@ För parallell körning med fyra processer:
 .\venv\Scripts\python.exe -m pytest -n 4 -q --tb=short
 ```
 
-Installera beroendena från `requirements.txt` och `requirements-test.txt`. Webbläsartesterna behöver Chromium, som installeras med `python -m playwright install chromium` i samma virtuella miljö.
+Installera först `requirements-test.txt`, som även inkluderar `requirements.txt`. Använd samma Python för installation och testkörning. I PowerShell:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements-test.txt
+.\venv\Scripts\python.exe -m playwright install chromium
+```
+
+På Linux kan du skapa en separat testmiljö från projektroten:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-test.txt
+.venv/bin/python -m playwright install --with-deps chromium
+.venv/bin/python -m pytest -q --tb=short
+```
+
+`--with-deps` installerar även Chromiums systembibliotek och kan kräva administratörsbehörighet. Kör själva pytest som vanlig användare.
+
+## Om Playwright saknas
+
+`ModuleNotFoundError: No module named 'playwright'` under insamlingen betyder att testmiljön saknar Playwright. `pytest-playwright` i `requirements-test.txt` installerar Python-paketet; Chromium installeras separat med kommandot ovan. Enbart `requirements.txt` räcker inte för hela testsviten.
+
+Installera testberoendena med samma Python som du använder för `-m pytest`, även om en annan virtuell miljö redan har dem. Kontrollera sedan installationen och testinsamlingen, till exempel på Linux:
+
+```sh
+.venv/bin/python -m pip check
+.venv/bin/python -m pytest --collect-only -q
+```
+
+`--collect-only` läser in testerna utan att köra dem. Den vanliga webbimagen innehåller bara applikationens beroenden; använd den separata testmiljön eller projektets testimage i `tests/dockerfile` för hela sviten.
 
 ## Scenarier
 

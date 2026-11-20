@@ -1,5 +1,75 @@
 # Kursplan
 
+## Inloggningens giltighetstid
+
+Kunder och administratörer förblir inloggade i **60 dagar från senaste besöket**.
+Varje anrop till webbplatsen med en giltig inloggningscookie förnyar tiden med
+60 dagar, även vid besök på en offentlig sida. Cookien sparas med ett
+utgångsdatum så att inloggningen finns kvar när webbläsaren stängs och öppnas
+igen. Efter 60 dagar utan aktivitet krävs en ny inloggning. **Logga ut**
+avslutar inloggningen direkt i webbläsaren.
+
+Inställningen gäller båda rollerna automatiskt, även redan inloggade konton
+när de besöker webbplatsen igen med en giltig cookie. Ingen databasmigrering
+eller ny miljövariabel behövs. Behåll samma `app_secret_key` mellan omstarter
+för att befintliga inloggningscookies ska fortsätta vara giltiga. Om användaren
+raderar sina cookies eller använder privat surfning kan en ny inloggning
+behövas tidigare.
+
+## E-postverifiering och lösenord
+
+Nya kundkonton skapas via `/signup` och måste verifiera sin e-postadress innan
+de kan logga in. Efter registreringen visas inloggningssidan direkt, med en
+banderoll som berättar att verifieringsmejlet har skickats. Registreringen
+skickar ett mejl med en engångslänk som gäller
+i 24 timmar. Kunden öppnar länken och trycker på **Verifiera min e-postadress**.
+Därefter loggar kunden in som vanligt. Att bara öppna länken förbrukar den inte,
+så automatiska länkkontroller i e-posttjänster aktiverar inte kontot.
+
+Knappen **Skicka verifieringsmejlet igen** i inloggningssidans banderoll använder
+e-postadressen och lösenordet i inloggningsformuläret för att begära en ny länk.
+Kunden stannar på inloggningssidan även efter omskick. Högst en länk skickas
+per minut och konto. En ny länk
+ersätter den tidigare. Fel vid utskick lämnar kontot overifierat och tillåter
+ett nytt försök; gränssnittet visar även om utskicken är avstängda.
+
+Mejlen använder `smtp_email`, `smtp_password`, `smtp_server_address` och
+`smtp_port`, med certifikatkontrollerad STARTTLS. Sätt `PUBLIC_BASE_URL` till
+webbplatsens betrodda adress. Om inställningen lämnas tom använder drift
+`https://kursplan.se`, medan `DEV_MODE=true` använder `http://127.0.0.1:<app_port>`
+(port 80 om `app_port` saknas). Med exempelvis `app_port=4753` leder mejlet
+till `http://127.0.0.1:4753/verify-email` i den lokala appen. Länkarna byggs
+aldrig från besökarens Host-header.
+
+Om utvecklingsappen nås genom en proxy, Docker-portmappning, en annan enhet
+eller `flask run --port`, ange den faktiska adressen uttryckligen i
+`PUBLIC_BASE_URL`. Vanlig HTTP tillåts bara för localhost i utvecklings- eller
+testläge; använd en betrodd HTTPS-adress för andra värdar. Starta om appen när
+konfigurationen ändras och begär en ny verifieringslänk; tidigare mejl ändras
+inte. Lokala länkar fungerar så länge samma utvecklingsdatabas finns kvar.
+
+Med `send_mail=0` skickas inga mejl och
+verifieringskravet kvarstår. De automatiskt skapade utvecklingskontona är
+redan verifierade och kan användas för lokal testning utan utskick.
+
+Alla nya lösenord lagras som envägshashar med **Argon2id**, unikt slumpmässigt
+salt och RFC 9106:s profil med 64 MiB minne, tre iterationer och parallellism
+fyra. Lösenord går inte att dekryptera. Verifieringslänkarnas hemliga token
+lagras endast som SHA-256-hashar och raderas efter användning.
+
+Vid nästa normala appstart migreras databasen automatiskt och utan att
+radera konton eller bokningar. Befintliga konton behåller sin åtkomst och
+markeras som verifierade. Lösenord som tidigare låg i klartext omvandlas till
+Argon2id. Befintliga scrypt-/PBKDF2-hashar uppgraderas efter nästa lyckade
+inloggning. Migreringen är idempotent och fungerar med både PostgreSQL och
+SQLite. Första starten kan ta längre tid om många klartextlösenord behöver
+hashas; gamla databasbackuper kan fortfarande innehålla den tidigare lagringen.
+
+Inför driftsättning: installera beroendena från `requirements.txt` (eller bygg
+om webbcontainern), kontrollera SMTP-inställningarna och den publika adressen,
+och ta en normal databasbackup enligt ordinarie driftsrutin före uppdateringen.
+Ingen manuell databasreset krävs.
+
 ## Kör appen i utvecklingsläge
 
 Sätt `DEV_MODE=true` i `.env` och starta appen med `python app.py`. Appen försöker först använda den beständiga PostgreSQL-databasen i `db_path`, med fem sekunders anslutningstimeout. Då finns konton och bokningar kvar mellan omstarter, och ändringar sparas i den konfigurerade databasen. Debugloggning styrs separat av `DEBUG` enligt avsnittet om loggning nedan.
@@ -35,9 +105,55 @@ docker compose exec web cat /app/.dev-accounts.json
 
 ### Exempelbokningar
 
-Den vanliga utvecklingsanvändaren får också fyra exempelbokningar: två väntande förfrågningar, en accepterad och en avbokad. Exemplen visar exakt datum, datumintervall, egen utbildning, frivillig ort och olika lokalval. De syns både i kundens dashboard och administratörsöversikten; där visas accepterade och avbokade poster via filtren. Inga mejl skickas när exemplen skapas.
+Med `DEV_MODE=true` får den vanliga utvecklingsanvändaren **16 exempelbokningar**
+i en ny databas. De fyra ursprungliga exemplen visar exakt datum, datumintervall,
+egen utbildning, frivillig ort och olika lokalval. Tolv ytterligare exempel
+visar hela bokningsflödet med sparade datumförslag, kundsvar, fastställda uppgifter
+och historik. De syns både i kundens dashboard och administratörsöversikten.
+Inga mejl skickas när exemplen skapas.
 
-Exemplen använder riktiga organisationsnummer så att företagsnamnen kan hämtas
+De tolv nya bokningarnas utbildningsnamn börjar med **Exempel:**. Varje bokning
+har en offentlig instruktion märkt **Exempeldata** i bokningshistoriken och en
+intern anteckning som bara administratören ser. Förslagen och kundsvaren är
+simulerade exempel. De öppna bokningarna kan fortsätta hanteras med de vanliga
+knapparna.
+
+| Exempel efter prefixet `Exempel:` | Utgångsläge | Prova eller kontrollera |
+| --- | --- | --- |
+| Registrera och förbered datumförslag | Registrerad | Öppna som administratör, fyll i datum, ort och lokal och välj **Granska förslaget** innan det skickas. |
+| Acceptera datumförslag | Inväntar kundens svar | Välj **Acceptera förslaget** som kund. Bokningen blir accepterad och förslagets datum, ort och lokal fastställs. |
+| Begär nytt datum | Inväntar kundens svar | Välj **Begär nytt datum** som kund. Administratören kan sedan skicka ett nytt förslag inom samma bokning. |
+| Avbryt datumförslag | Inväntar kundens svar | Välj **Avbryt bokningen** som kund. Förslaget avaktiveras och bokningen finns kvar som avbruten. |
+| Försök skicka e-post igen | Inväntar kundens svar, simulerat misslyckat utskick | Välj **Försök skicka e-post igen** som administratör. Kunden kan redan svara i portalen. |
+| Nytt datum önskas | Nytt datum önskas | Se kundens tidigare svar och skicka ett nytt datumförslag som administratör. |
+| Flera datumförslag | Inväntar kundens svar | Jämför det avböjda och det aktuella förslaget. Endast det aktuella kan besvaras. |
+| Bekräftad utbildning | Accepterad | Jämför önskemålen med de fastställda uppgifterna. Administratören kan markera bokningen som slutförd, ombokad eller avbruten. |
+| Ombokad utbildning | Ombokad | Kontrollera att de fastställda uppgifterna finns kvar. Administratören kan slutföra eller avbryta bokningen. |
+| Slutförd utbildning | Slutförd | Se ett utbildningsdatum i det förflutna och den bevarade bokningshistoriken. |
+| Avbruten av kunden | Avbruten | Se kundens avbrytande svar på datumförslaget. |
+| Avbruten av administratören | Avbruten | Se att förslaget är avaktiverat utan att något kundsvar har registrerats. |
+
+För att prova exemplen i webbläsaren:
+
+1. Sätt `DEV_MODE=true` och `send_mail=0` i `.env` och starta appen med
+   `python app.py`. Med avstängd e-post kan även nya förslag och omförsök provas
+   utan riktiga utskick.
+2. Logga in via `/login` med utvecklingsanvändaren från `.dev-accounts.json`.
+   Öppna **Besvara datumförslag** eller **Visa bokning** och läs instruktionen i
+   bokningshistoriken. De tre separata svarsexemplen låter dig prova alla
+   kundsvaren på varsin bokning.
+3. Logga ut och logga in med utvecklingsadministratören. Använd filtren i
+   `/admin/`, exempelvis **Inväntar kundens svar**, **Nytt datum önskas** eller
+   **Slutförd**, och välj **Öppna**. Där finns datumförslag, tillåtna
+   statusändringar och formuläret för interna anteckningar.
+4. Öppna **Händelselogg** i administrationen för att följa bokningshändelserna.
+   Logga in som kund igen för att se resultatet av ändringarna; interna
+   administratörsanteckningar visas bara för administratörer.
+
+`DEBUG=true` styr endast loggningen. Det skapar inga exempelbokningar när
+`DEV_MODE=false`.
+
+De fyra ursprungliga exemplen använder riktiga organisationsnummer så att företagsnamnen kan hämtas
 med adminsidans gratis API:
 
 | Exempelutbildning | Företag | Organisationsnummer |
@@ -53,7 +169,28 @@ inga verkliga kontaktuppgifter för bolagen läggs till. Utvecklingskontots
 organisationsnummer ändras inte. Uppstarten behöver inte kontakta API:et;
 företagsnamnen hämtas när administratören öppnar sidan.
 
-Exemplen skapas en gång per utvecklingsanvändare och databas. En separat tabell, `dev_booking_seeds`, skapas automatiskt i utvecklingsläget och håller reda på detta. Omstarter ändrar inte befintliga bokningar och återställer inte exempel som du har redigerat, avbokat eller tagit bort. En ny tillfällig SQLite-databas får nya exempel. Med `DEV_MODE=false` skapas varken exempelbokningar eller markörtabellen.
+Exemplen skapas en gång per utvecklingsanvändare och databas. Tabellen
+`dev_booking_seeds` håller reda på de fyra ursprungliga exemplen. Den nya
+tabellen `dev_booking_scenario_seeds` håller reda på varje ytterligare scenario
+per användare, så de tolv nya exemplen läggs även till i en befintlig
+utvecklingsdatabas. Befintliga bokningar och konton bevaras. Omstarter ändrar
+inte exempel som du har redigerat eller avbokat och återställer inte borttagna
+exempel. En ny tillfällig SQLite-databas får alla exempel igen. Markörtabellerna
+skapas automatiskt endast i utvecklingsläget; med `DEV_MODE=false` skapas
+varken exempelbokningar eller dessa tabeller.
+
+Vid uppstart med `DEV_MODE=true` får befintliga bokningar också tre historikhändelser
+märkta **Exempeldata**: en offentlig granskning av utvecklingsadministratören,
+en beskrivning som passar bokningens aktuella status och en intern anteckning.
+Kunden ser administratörens namn i den offentliga historiken; den interna
+anteckningen visas bara för administratörer. Bokningsuppgifter, datumförslag
+och tidigare historik bevaras, och inga mejl skickas. Markörtabellen
+`dev_booking_history_seeds` gör att varje bokning kompletteras en gång, även
+i en befintlig utvecklingsdatabas. Nya manuellt skapade bokningar får
+exempelhistorik vid nästa uppstart. De tolv nya scenarierna får i stället sin
+sammanhängande exempelhistorik, instruktion och interna anteckning när de
+skapas. `DEBUG=true` styr bara loggnivån och skapar ingen exempelhistorik när
+`DEV_MODE=false`.
 
 De riktiga organisationsnumren används för nya exempel. Tidigare skapade
 exempel i en beständig databas skrivs inte om automatiskt, eftersom de kan ha
@@ -88,6 +225,19 @@ text. Företagsnamnet sparas inte i databasen och ändrar inga bokningsuppgifter
 Ingen databasmigrering eller ny miljövariabel behövs. Webbservern behöver
 utgående HTTPS till `mackan.eu`. Tester använder mockade API-svar och skickar
 inga kunduppgifter till den externa tjänsten.
+
+## Svensk tid på hemsidan
+
+Klockslag i bokningshistoriken, datumförslagen och administratörens händelselogg
+visas i svensk tid (`Europe/Stockholm`). Sommar- och vintertid hanteras
+automatiskt: `CEST` är sommartid och `CET` är vintertid. Även sidfotens årtal
+följer svensk tid oavsett besökarens tidszon. Utbildningsdatum och datumintervall
+är kalenderdatum och flyttas inte vid tidszonsomvandlingen.
+
+Tidsstämplarna lagras fortsatt i UTC och omvandlas först när sidan visas.
+Ingen databasmigrering eller ny miljövariabel behövs. Installera beroendena
+från `requirements.txt`, där `tzdata` ger tidszonsdata även i Windows och
+containrar utan systemets tidszonsdatabas.
 
 ## Loggning och loggar mellan omstarter
 
@@ -244,7 +394,14 @@ konkurrerande svar och dubbla formuläranrop.
 
 ### E-post och leveransstatus
 
-Datumförslag använder samma `smtp_email`, `smtp_password`,
+Kunden får mejl vid **Inväntar ditt svar**, **Accepterad** och **Avbruten** när
+e-post är aktiverad. Datumförslaget är mejlet för **Inväntar ditt svar** och
+innehåller svarsalternativen. Efter kundens acceptans skickas en bekräftelse med
+fastställt datum, ort och lokal. Vid avbrott skickas en avbrottsbekräftelse till
+bokningens e-postadress, oavsett om kunden eller administratören avbryter.
+Nekade eller upprepade statusändringar skickar inga ytterligare mejl.
+
+Datumförslag och statusbekräftelser använder samma `smtp_email`, `smtp_password`,
 `smtp_server_address` och `smtp_port` som tidigare, med STARTTLS. Länkarna använder
 den fasta adressen `https://kursplan.se` och påverkas inte av HTTP-anropets
 Host-header. `send_mail=0` stänger av utskick; detta visas uttryckligen i
@@ -255,6 +412,11 @@ Ett misslyckat utskick markeras som misslyckat och kan försökas igen i
 bokningsdetaljen utan att ett nytt datumförslag skapas. Endast ett samtidigt
 anrop får försöka skicka ett visst förslag. SMTP-uppgifter och felinnehåll skrivs
 inte till loggen. Testerna använder avstängd e-post eller mockad SMTP.
+
+Acceptans och avbrott sparas innan statusmejlet skickas. Om utskicket misslyckas
+visas ett meddelande för den som utförde åtgärden; den sparade bokningsstatusen
+behålls. Statusbekräftelser har ingen automatisk omsändning eller separat
+knapp för nytt leveransförsök.
 
 Om processen avbryts mitt under ett SMTP-anrop kan leveransstatus bli kvar som
 **Utskick pågår**. Kontrollera då leveransen hos e-postleverantören före ett
@@ -314,7 +476,22 @@ vanlig användare.
 Chromium används av webbläsartesterna. I CI installeras den automatiskt med
 Playwright innan pytest körs.
 
-Om den inbyggda PostgreSQL-versionen inte finns för din plattform kan du installera `requirements.txt` och sätta `TEST_DATABASE_URL` till en separat PostgreSQL-testserver. Testanvändaren behöver rätt att skapa databaser. Testerna skapar och tar bort sina egna databaser även i det läget.
+Om insamlingen av tester avbryts med `ModuleNotFoundError: No module named 'playwright'`
+behöver testberoendena installeras i samma Python-miljö som kör pytest. Se
+[testguiden](tests/README.md) för fullständiga installationskommandon för Windows
+och Linux samt kontroll av testinsamlingen.
+
+Om den inbyggda PostgreSQL-versionen inte finns för din plattform kan du
+installera övriga testberoenden separat i samma virtuella miljö:
+
+```sh
+python -m pip install -r requirements.txt "pytest-playwright>=0.7,<1"
+python -m playwright install chromium
+```
+
+Sätt sedan `TEST_DATABASE_URL` till en separat PostgreSQL-testserver.
+Testanvändaren behöver rätt att skapa databaser. Testerna skapar och tar bort
+sina egna databaser även i det läget.
 
 ## Från pull request till produktion
 

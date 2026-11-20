@@ -5,7 +5,6 @@ from threading import Thread
 
 from playwright.sync_api import expect
 import pytest
-from werkzeug.security import generate_password_hash
 from werkzeug.serving import make_server
 
 import database
@@ -139,7 +138,7 @@ def test_browser_required_and_email_validation_prevents_submission(page, applica
 
 def test_browser_login_error_can_be_corrected_with_keyboard_and_logout(page, application_client, application_server):
     path = application_client.application.config["DB_PATH"]
-    database.create_user("Testkund", "browser@example.test", generate_password_hash("correct-test-password"),
+    database.create_user("Testkund", "browser@example.test", "correct-test-password",
                          "5566778899", "user", path)
     url, _ = application_server
     page.goto(f"{url}/login")

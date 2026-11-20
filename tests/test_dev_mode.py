@@ -19,8 +19,10 @@ def run_app(tmp_path):
         "csrf.py",
         "company_lookup.py",
         "database.py",
+        "password_security.py",
         "dev_accounts.py",
         "gen_func.py",
+        "time_display.py",
         "utbildningar.json",
     ):
         shutil.copy2(project / module, tmp_path)
@@ -115,12 +117,28 @@ def test_dev_mode_uses_temporary_database_without_enabling_debug_logging(run_app
             health = user.get("/health")
             assert health.status_code == 200
             assert health.get_json() == {"status": "ok"}
+            verification_links = []
+            import gen_func
+            def capture_verification(email, link):
+                verification_links.append(link)
+                return "sent"
+            gen_func.send_verification_mail = capture_verification
             signup = user.post("/signup", data={
                 "csrf_token": csrf(user, "/signup"),
                 "name": "Test User", "email": "user@example.com",
                 "password": "test-user-password", "organization_number": "0123456789",
             })
             assert signup.status_code == 302
+            assert database.authenticate_user("user@example.com", "test-user-password", db_path) is None
+            from urllib.parse import parse_qs, urlsplit
+            verification_token = parse_qs(urlsplit(verification_links[0]).query)["token"][0]
+            verify = user.get("/verify-email", query_string={"token": verification_token})
+            assert verify.status_code == 200
+            with user.session_transaction() as state:
+                verification_csrf = state["booking_csrf_token"]
+            assert user.post("/verify-email", data={
+                "verification_token": verification_token, "csrf_token": verification_csrf,
+            }).location == "/login"
             user.get("/logout")
             login = user.post("/login", data={
                 "csrf_token": csrf(user, "/login"),
@@ -253,7 +271,7 @@ def test_dev_mode_uses_configured_postgresql_database_and_preserves_data(run_app
         expected_settings["connect_timeout"] = "5"
         assert conninfo_to_dict(app.config["DB_PATH"]) == expected_settings
         assert not app.logger.isEnabledFor(logging.DEBUG)
-        assert len(database.get_all_bookings(app.config["DB_PATH"])) == 5
+        assert len(database.get_all_bookings(app.config["DB_PATH"])) == 17
         assert len(database.get_bookings_by_email("existing@example.com", app.config["DB_PATH"])) == 1
         accounts = json.loads(Path(".dev-accounts.json").read_text(encoding="utf-8"))
         for role, credentials in accounts.items():
@@ -376,11 +394,13 @@ def test_dev_mode_does_not_hide_initialization_errors(run_app, error_type):
     )
 
 
-def test_dev_mode_off_uses_configured_postgresql_database(run_app):
+@pytest.mark.parametrize("debug", ["false", "true"])
+def test_dev_mode_off_uses_configured_postgresql_database(run_app, debug):
     run_app(
         "false",
         """
         import logging
+        import os
         from unittest.mock import patch
 
         from pathlib import Path
@@ -389,6 +409,8 @@ def test_dev_mode_off_uses_configured_postgresql_database(run_app):
             patch("psycopg.connect", side_effect=AssertionError("unexpected PostgreSQL connection")),
             patch("database.ensure_dev_users", side_effect=AssertionError("unexpected development users")),
             patch("database.ensure_dev_bookings", side_effect=AssertionError("unexpected sample bookings")),
+            patch("database.ensure_dev_booking_history", side_effect=AssertionError("unexpected sample history")),
+            patch("database.ensure_dev_workflow_bookings", side_effect=AssertionError("unexpected workflow examples")),
             patch("database.create_database") as create_database,
             patch("database.ensure_test_user") as ensure_test_user,
         ):
@@ -403,9 +425,70 @@ def test_dev_mode_off_uses_configured_postgresql_database(run_app):
 
             assert app.config["DEV_MODE"] is False
             assert app.config["DB_PATH"] == "postgresql://example.invalid/kursplan"
-            assert not app.logger.isEnabledFor(logging.DEBUG)
+            assert app.logger.isEnabledFor(logging.DEBUG) == (os.getenv("DEBUG") == "true")
             assert not Path(".dev-accounts.json").exists()
         """,
+        DEBUG=debug,
+    )
+
+
+def test_dev_mode_seeds_booking_history_at_startup_and_preserves_it_on_restart(run_app, all_db_path):
+    run_app(
+        "true",
+        """
+        import json
+        from pathlib import Path
+
+        import database
+        from app import app, initialize_database
+
+        accounts = json.loads(Path(".dev-accounts.json").read_text(encoding="utf-8"))
+        db_path = app.config["DB_PATH"]
+        bookings = database.list_booking_details(db_path)
+        assert len(bookings) == 16
+        with database._cursor(db_path) as cursor:
+            database._execute(cursor, "SELECT booking_id FROM dev_booking_scenario_seeds")
+            scenario_ids = {row[0] for row in cursor.fetchall()}
+        assert len(scenario_ids) == 12
+        histories = {}
+        for booking in bookings:
+            history = database.get_booking_history(booking["id"], db_path, include_actor_details=True)
+            examples = [event for event in history if event["note"].startswith("Exempeldata:")]
+            if booking["id"] in scenario_ids:
+                assert any(not event["is_private"] for event in examples)
+                assert any(event["is_private"] for event in history)
+            else:
+                assert len(history) == 4
+                assert len(examples) == 3
+                assert sum(event["is_private"] for event in examples) == 1
+                assert all(event["from_status"] == event["to_status"] == booking["status"] for event in examples)
+                assert examples[0]["actor"] == "admin"
+                assert examples[0]["actor_name"] == "Utvecklingsadministratör"
+            histories[booking["id"]] = history
+
+        original_bookings = database.get_all_bookings(db_path)
+        initialize_database()
+        # Existing startup migration may fill confirmed fields on old samples;
+        # the booking details presented to the user must stay the same.
+        assert database.get_all_bookings(db_path) == original_bookings
+        for booking in bookings:
+            assert database.get_booking_history(
+                booking["id"], db_path, include_actor_details=True,
+            ) == histories[booking["id"]]
+
+        admin = database.authenticate_user(
+            accounts["admin"]["email"], accounts["admin"]["password"], db_path,
+        )
+        client = app.test_client()
+        with client.session_transaction() as state:
+            state["user_id"] = admin[0]
+        logs = client.get("/admin/logs")
+        assert logs.status_code == 200
+        assert "Exempeldata:" in logs.get_data(as_text=True)
+        assert "Utvecklingsadministratör" in logs.get_data(as_text=True)
+        assert client.get("/health").get_json() == {"status": "ok"}
+        """,
+        db_path=None if isinstance(all_db_path, Path) else all_db_path,
     )
 
 
@@ -483,13 +566,16 @@ def test_dev_mode_creates_two_usable_accounts_without_settings(run_app):
         original_bookings = database.get_bookings_by_email(
             accounts["user"]["email"], app.config["DB_PATH"],
         )
-        assert len(original_bookings) == 4
+        assert len(original_bookings) == 16
         assert {row[3] for row in original_bookings} == {
             "5560747551", "5560125790", "5560160680", "5560427220",
         }
-        assert sorted(row[9] for row in original_bookings) == [
-            "accepted", "cancelled", "pending", "pending",
-        ]
+        from collections import Counter
+        assert Counter(row[9] for row in original_bookings) == {
+            "pending": 2, "registered": 1, "awaiting_response": 5,
+            "new_date_requested": 1, "accepted": 2, "rescheduled": 1,
+            "completed": 1, "cancelled": 3,
+        }
         original_users = {}
         for role, location in (("admin", "/admin/"), ("user", "/dashboard")):
             credentials = accounts[role]

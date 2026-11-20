@@ -1,14 +1,14 @@
 from datetime import date
 from functools import wraps
 
-from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from csrf import clear_booking_csrf_token, get_booking_csrf_token
 import company_lookup
 import database
 import gen_func
-from users.routes import _check_csrf, booking_detail_context
+from users.routes import _check_csrf, booking_detail_context, notify_booking_status
 
 
 admin_page = Blueprint("admin_page", __name__, template_folder="templates", url_prefix="/admin")
@@ -22,7 +22,7 @@ def admin_required(func):
             current_app.logger.warning("Administratörsåtkomst nekades: inloggning krävs.")
             return redirect(url_for("user_page.login"))
         user = database.get_user_identity(user_id, current_app.config["DB_PATH"])
-        if user is None:
+        if user is None or not user["email_verified"]:
             current_app.logger.warning("Administratörsåtkomst nekades: kontot finns inte längre.")
             session.clear()
             return redirect(url_for("user_page.login"))
@@ -83,7 +83,7 @@ def _detail_response(booking, error, status=400, values=None):
 def _deliver_proposal(booking, proposal):
     """Reserve delivery before SMTP so repeated requests cannot send twice."""
     db_path = current_app.config["DB_PATH"]
-    if not database.claim_proposal_delivery(proposal["id"], db_path):
+    if not database.claim_proposal_delivery(proposal["id"], db_path, actor_id=session["user_id"]):
         current_app.logger.warning("E-postutskick hoppades över: redan hanterat eller pågående. booking_id=%s proposal_id=%s.", booking["id"], proposal["id"])
         flash("Utskicket har redan hanterats eller pågår. Kontrollera förslagets leveransstatus.", "warning")
         return
@@ -127,6 +127,27 @@ def dashboard():
     )
 
 
+@admin_page.route("/logs", methods=["GET"])
+@admin_required
+def logs():
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        abort(400, description="Ange ett giltigt sidnummer.")
+    if page < 1 or page > 2147483647:
+        abort(400, description="Ange ett giltigt sidnummer.")
+    page_size = 50
+    events = database.list_booking_audit_log(
+        current_app.config["DB_PATH"], limit=page_size + 1, offset=(page - 1) * page_size,
+    )
+    response = make_response(render_template(
+        "admin_logs.html", events=events[:page_size], page=page,
+        has_next=len(events) > page_size, status_labels=database.BOOKING_STATUSES,
+    ))
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @admin_page.route("/bookings", methods=["POST"])
 @admin_required
 def book():
@@ -166,6 +187,8 @@ def change_status(booking_id):
     clear_booking_csrf_token()
     current_app.logger.info("Bokningsstatus uppdaterad av administratör: booking_id=%s status=%s.", booking_id, request.form["target"])
     flash("Bokningens status har uppdaterats.", "success")
+    if request.form["target"] == "cancelled":
+        notify_booking_status(booking_id, "cancelled")
     return redirect(url_for("admin_page.booking_detail", booking_id=booking_id))
 
 

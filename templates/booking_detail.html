@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from '_booking_macros.html' import status_pill, requested_date, messages %}
+{% from '_booking_macros.html' import status_pill, requested_date, messages, history_actor %}
 {% block title %}Bokning #{{ booking.id }}{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
@@ -8,6 +8,9 @@
 {% endblock %}
 
 {% block content %}
+{% if not is_admin %}
+{% set status_labels = dict(status_labels, awaiting_response='Inväntar ditt svar') %}
+{% endif %}
 <main class="user-dashboard workflow-page booking-workflow">
   <div class="dashboard-container">
     <a class="back-link" href="{{ url_for('admin_page.dashboard' if is_admin else 'user_page.dashboard') }}">&larr; Till bokningsöversikten</a>
@@ -32,7 +35,7 @@
         <div class="fact-wide"><dt>Föreslagen lokal</dt><dd>{{ active_proposal.proposed_venue }}</dd></div>
       </dl>
       {% if is_admin %}
-        {% if active_proposal.delivery_status == 'sent' %}<p class="workflow-muted">E-post skickad {{ active_proposal.sent_at }}.</p>
+        {% if active_proposal.delivery_status == 'sent' %}<p class="workflow-muted">E-post skickad <time datetime="{{ active_proposal.sent_at }}">{{ active_proposal.sent_at|swedish_time }}</time>.</p>
         {% elif active_proposal.delivery_status == 'sending' %}<p class="workflow-muted" role="status">E-postutskicket pågår. Förslaget kan redan besvaras i kundportalen.</p>
         {% elif active_proposal.delivery_status == 'disabled' %}<p class="workflow-muted">E-post är avstängd i denna miljö. Förslaget är tillgängligt i kundportalen.</p>
         {% else %}<p class="delivery-warning">E-postmeddelandet har inte skickats. Förslaget kan besvaras i kundportalen.</p>{% endif %}
@@ -130,8 +133,8 @@
         <li>
           <div class="history-heading"><strong>Förslag #{{ proposal.id }} · {{ proposal.proposed_date }}</strong><span>{{ proposal_states.get(proposal.state, proposal.state) }}</span></div>
           <p>{{ proposal.proposed_city }} · {{ proposal.proposed_venue }}</p>
-          <p class="workflow-muted">Skapat {{ proposal.created_at }}{% if proposal.sent_at %} · E-post skickad {{ proposal.sent_at }}{% endif %}</p>
-          {% if proposal.responded_at %}<p class="workflow-muted">Kundens svar: {{ {'accept': 'Accepterat', 'new_date': 'Begär nytt datum', 'cancel': 'Avbryt bokningen'}.get(proposal.response, proposal.response or 'Avaktiverat') }} · {{ proposal.responded_at }}</p>{% endif %}
+          <p class="workflow-muted">Skapat <time datetime="{{ proposal.created_at }}">{{ proposal.created_at|swedish_time }}</time>{% if proposal.sent_at %} · E-post skickad <time datetime="{{ proposal.sent_at }}">{{ proposal.sent_at|swedish_time }}</time>{% endif %}</p>
+          {% if proposal.responded_at %}<p class="workflow-muted">Kundens svar: {{ {'accept': 'Accepterat', 'new_date': 'Begär nytt datum', 'cancel': 'Avbryt bokningen'}.get(proposal.response, proposal.response or 'Avaktiverat') }} · <time datetime="{{ proposal.responded_at }}">{{ proposal.responded_at|swedish_time }}</time></p>{% endif %}
         </li>
         {% endfor %}
       </ol>
@@ -140,12 +143,13 @@
 
     <section class="workflow-section" aria-labelledby="history-heading">
       <h2 id="history-heading">Bokningshistorik{% if is_admin %} och anteckningar{% endif %}</h2>
+      {% if is_admin %}<p><a href="{{ url_for('admin_page.logs') }}">Öppna den samlade händelseloggen</a></p>{% endif %}
       {% set actors = {'admin': 'Administratör', 'customer': 'Kund', 'system': 'System'} %}
       {% if history %}
-      <ol class="booking-timeline">
-        {% for event in history %}
+      <ol class="booking-timeline booking-history">
+        {% for event in history|reverse %}
         <li>
-          <p class="history-meta"><time>{{ event.created_at }}</time> · {{ actors.get(event.actor, event.actor) }}{% if event.is_private|default(false) %} · Intern anteckning{% endif %}</p>
+          <p class="history-meta"><time datetime="{{ event.created_at }}">{{ event.created_at|swedish_time }}</time> · {% if is_admin or event.actor == 'admin' %}{{ history_actor(event, show_account_id=is_admin) }}{% else %}{{ actors.get(event.actor, event.actor) }}{% endif %}{% if event.is_private|default(false) %} · Endast administratörer{% endif %}</p>
           {% if event.to_status and event.to_status != event.from_status %}<p><strong>{% if event.from_status %}{{ status_labels.get(event.from_status, event.from_status) }} &rarr; {% endif %}{{ status_labels.get(event.to_status, event.to_status) }}</strong></p>{% endif %}
           {% if event.note %}<p class="history-note">{{ event.note }}</p>{% endif %}
         </li>

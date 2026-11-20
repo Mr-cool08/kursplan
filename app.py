@@ -1,3 +1,5 @@
+from multiprocessing.util import debug
+
 from flask import render_template, request, session, redirect, url_for
 import sqlite3
 from datetime import datetime, timedelta
@@ -29,6 +31,8 @@ app.logger.info("Applikationen startas: dev_mode=%s.", dev_mode)
 app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
 app.config["DEV_MODE"] = dev_mode
 app.config["DB_PATH"] = os.getenv("db_path")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=60)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 if dev_mode:
     app.secret_key = app.secret_key or database.generate_secret_key()
@@ -38,6 +42,13 @@ elif not app.config["DB_PATH"]:
 
 app.register_blueprint(user_page)
 app.register_blueprint(admin_page)
+
+
+@app.before_request
+def keep_authenticated_session_permanent():
+    # Befintliga inloggningar får också 60 dagar från senaste besöket.
+    if session.get("user_id") and not session.permanent:
+        session.permanent = True
 
 
 def initialize_database():
@@ -53,7 +64,13 @@ def initialize_database():
             accounts["user"]["email"], accounts["user"]["password"], db_path,
         )
         booking_ids = database.ensure_dev_bookings(accounts["user"]["email"], db_path)
+        history_ids = database.ensure_dev_booking_history(accounts["admin"]["email"], db_path)
+        workflow_ids = database.ensure_dev_workflow_bookings(
+            accounts["user"]["email"], accounts["admin"]["email"], db_path,
+        )
         app.logger.debug("Utvecklingsläge: skapade %s exempelbokningar.", len(booking_ids))
+        app.logger.debug("Utvecklingsläge: skapade %s exempel med bokningsflöden.", len(workflow_ids))
+        app.logger.debug("Utvecklingsläge: lade till exempelhistorik på %s bokningar.", len(history_ids))
         app.logger.debug("Utvecklingskontonas inloggningsuppgifter finns i %s", accounts_path)
     else:
         database.ensure_test_user(
@@ -346,10 +363,17 @@ if __name__ == '__main__':
     try:
         if not dev_mode:
             initialize_database()
+        debug = os.environ.get("flask_debug", "").strip().lower() in {"1", "true", "yes", "on"}
+        if debug:
+                app.logger.info("Applikationen körs i felsökningsläge.")
+                debug = True
+        else:
+                app.logger.info("Applikationen körs i produktionsläge.")
+                debug = False
         port = int(os.environ.get("app_port", 80))
         host = os.environ.get("app_host", "0.0.0.0")
         app.logger.info("Webbservern startas: port=%s.", port)
-        app.run(port=port, host=host, use_reloader=False, debug=False)
+        app.run(port=port, host=host, use_reloader=debug, debug=debug)
     except SystemExit as error:
         if error.code:
             app.logger.critical("Applikationen stoppades med en felkod under serverstart.")

@@ -1,7 +1,9 @@
 Flask
 python-dotenv
+tzdata
 datetime
 pytest
 psycopg[binary]>=3.2,<4
+argon2-cffi>=25.1,<26
 pytest-xdist
 

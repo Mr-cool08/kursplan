@@ -2,19 +2,23 @@ from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import logging
+import hashlib
 import secrets
 import sqlite3
+import time
 
 import psycopg
-from werkzeug.security import check_password_hash, generate_password_hash
+from password_security import hash_password, is_password_hash, verify_password
 
 
 logger = logging.getLogger(__name__)
 _WRITE_OPERATIONS = frozenset({
     "create_booking", "create_booking_request", "create_user", "remove_booking",
-    "ensure_test_user", "ensure_dev_users", "ensure_dev_bookings", "create_proposal",
+    "ensure_test_user", "ensure_dev_users", "ensure_dev_bookings", "ensure_dev_booking_history",
+    "ensure_dev_workflow_bookings", "create_proposal",
     "respond_to_proposal", "transition_booking", "add_booking_note",
     "claim_proposal_delivery", "finish_proposal_delivery", "create_database",
+    "issue_email_verification", "verify_email_token", "revoke_email_verification",
 })
 
 
@@ -135,11 +139,11 @@ def _insert_booking(cursor, columns, values):
     booking_id = cursor.fetchone()[0]
     fields = dict(zip(columns, values))
     status = fields.get("status", "pending")
-    _execute(cursor, "SELECT id FROM users WHERE email = %s", (fields.get("email"),))
+    _execute(cursor, "SELECT id, role FROM users WHERE email = %s", (fields.get("email"),))
     user = cursor.fetchone()
     _record_history(
         cursor, booking_id, None, status,
-        "customer" if status == "pending" else "system",
+        ("admin" if user and user[1] == "admin" else "customer") if status == "pending" else "system",
         "Bokningsförfrågan skapad." if status == "pending" else "Bokning skapad.",
         user[0] if user and status == "pending" else None,
     )
@@ -274,18 +278,19 @@ def create_booking_request(
 
 def check_user_exists(email, db_path):
     with _cursor(db_path, "check_user_exists") as cursor:
-        _execute(cursor, "SELECT id FROM users WHERE email = %s", (email,))
+        _execute(cursor, "SELECT id FROM users WHERE LOWER(email) = LOWER(%s)", (email,))
         return cursor.fetchone() is not None
 
 
-def create_user(name, email, password, organization_number, role, db_path):
+def create_user(name, email, password, organization_number, role, db_path, *, email_verified=True):
+    stored_password = hash_password(password)
     with _cursor(db_path, "create_user") as cursor:
         _execute(
             cursor,
-            "INSERT INTO users (name, email, password, organization_number, role) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "INSERT INTO users (name, email, password, organization_number, role, email_verified) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
             "RETURNING id, name, organization_number, email",
-            (name, email, password, organization_number, role),
+            (name, email, stored_password, organization_number, role, int(email_verified)),
         )
         return cursor.fetchone()
 
@@ -381,12 +386,13 @@ def get_bookings_by_status(status, db_path):
 
 
 def ensure_test_user(email, password, db_path):
+    stored_password = hash_password(password)
     with _cursor(db_path, "ensure_test_user") as cursor:
         _execute(
             cursor,
             "INSERT INTO users (name, email, password, organization_number, role) "
             "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (email) DO NOTHING",
-            ("Admin", email, password, "0000000000", "admin"),
+            ("Admin", email, stored_password, "0000000000", "admin"),
         )
 
 
@@ -408,7 +414,7 @@ def ensure_dev_users(admin_email, admin_password, user_email, user_password, db_
                 cursor,
                 "INSERT INTO users (name, email, password, organization_number, role) "
                 "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (email) DO NOTHING",
-                (name, email, generate_password_hash(password), "0000000000", role),
+                (name, email, hash_password(password), "0000000000", role),
             )
 
 
@@ -500,37 +506,355 @@ def ensure_dev_bookings(user_email, db_path):
         return booking_ids
 
 
-def authenticate_user(email, password, db_path):
-    """Authenticate a user and return the database-backed account role."""
+def ensure_dev_workflow_bookings(user_email, admin_email, db_path):
+    """Seed interactive workflow examples once, called only by DEV_MODE startup.
+
+    Keep each scenario, its proposals, history and marker in one transaction.
+    Existing bookings and earlier examples are never rewritten. No mail or
+    external services are invoked; even the failed delivery is simulated.
+    """
+    scenarios = (
+        ("registered", "Registrera och förbered datumförslag", "registered",
+         "Administratör: öppna Skicka datumförslag, fyll i datum, ort och lokal och välj Granska förslaget."),
+        ("accept_proposal", "Acceptera datumförslag", "awaiting_response",
+         "Kund: välj Acceptera förslaget. Datum, ort och lokal blir fastställda och status blir Accepterad."),
+        ("request_new_date", "Begär nytt datum", "awaiting_response",
+         "Kund: välj Begär nytt datum. Administratören kan sedan skicka ett nytt förslag inom samma bokningsnummer."),
+        ("cancel_proposal", "Avbryt datumförslag", "awaiting_response",
+         "Kund: välj Avbryt bokningen. Förslaget avaktiveras och bokningen finns kvar som Avbruten."),
+        ("failed_delivery", "Försök skicka e-post igen", "awaiting_response",
+         "Administratör: ett misslyckat utskick är simulerat. Välj Försök skicka e-post igen. "
+         "Sätt send_mail=0 före testet för att hålla utskick avstängda. Kunden kan redan svara i portalen."),
+        ("new_date_requested", "Nytt datum önskas", "new_date_requested",
+         "Administratör: granska kundens tidigare svar och skicka ett nytt datumförslag. Det avböjda förslaget bevaras."),
+        ("second_proposal", "Flera datumförslag", "awaiting_response",
+         "Kund: jämför det avböjda förslaget med det aktuella under Tidigare datumförslag och kundsvar. "
+         "Bara det aktuella förslaget kan besvaras."),
+        ("accepted", "Bekräftad utbildning", "accepted",
+         "Administratör: prova Markera som ombokad, slutförd eller avbruten. "
+         "Jämför ursprungligt önskemål med kundens accepterade datum, ort och lokal."),
+        ("rescheduled", "Ombokad utbildning", "rescheduled",
+         "Administratör: bokningen kan slutföras eller avbrytas. Ombokad är en statusmarkering; "
+         "senast fastställda datum, ort och lokal behålls."),
+        ("completed", "Slutförd utbildning", "completed",
+         "Kund och administratör: en genomförd utbildning med passerat datum visas med fastställda uppgifter "
+         "och historik. Inga fler statusåtgärder erbjuds."),
+        ("cancelled_customer", "Avbruten av kunden", "cancelled",
+         "Kund och administratör: förslaget är avaktiverat och kundens svar Avbryt bokningen finns i historiken. "
+         "Bokningen kan inte accepteras igen."),
+        ("cancelled_admin", "Avbruten av administratören", "cancelled",
+         "Kund och administratör: administratören har avbrutit bokningen. Förslaget är avaktiverat "
+         "utan ett påhittat kundsvar."),
+    )
+    with _cursor(db_path, "ensure_dev_workflow_bookings") as cursor:
+        # Reserve this customer before reading markers, including on SQLite.
+        _execute(cursor, "UPDATE users SET name = name WHERE email = %s AND role = 'user' RETURNING id, name",
+                 (user_email,))
+        customer = cursor.fetchone()
+        _execute(cursor, "SELECT id FROM users WHERE email = %s AND role = 'admin'", (admin_email,))
+        admin = cursor.fetchone()
+        if customer is None or admin is None:
+            logger.debug("Exempelflöden hoppades över; utvecklingskund eller administratör saknas.")
+            return []
+        _execute(cursor, "CREATE TABLE IF NOT EXISTS dev_booking_scenario_seeds ("
+                 "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                 "scenario TEXT NOT NULL, "
+                 "booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL, "
+                 "PRIMARY KEY (user_id, scenario))")
+        _execute(cursor, "CREATE TABLE IF NOT EXISTS dev_booking_history_seeds ("
+                 "booking_id INTEGER PRIMARY KEY REFERENCES bookings(id) ON DELETE CASCADE)")
+
+        booking_ids = []
+        today = date.today()
+        for index, (key, title, target, guide) in enumerate(scenarios):
+            _execute(cursor, "INSERT INTO dev_booking_scenario_seeds (user_id, scenario) VALUES (%s, %s) "
+                     "ON CONFLICT (user_id, scenario) DO NOTHING RETURNING scenario", (customer[0], key))
+            if cursor.fetchone() is None:
+                continue
+            days = -21 if target == "completed" else 21 + index * 7
+            start = (today + timedelta(days=days)).isoformat()
+            end = (today + timedelta(days=days + 4)).isoformat()
+            interval = index % 2 == 1
+            own_venue = index % 4 == 0
+            booking = dict.fromkeys(_BOOKING_DETAIL_COLUMNS[1:])
+            booking.update(
+                name=customer[1], email=user_email,
+                organization_number=("5560747551", "5560125790", "5560160680", "5560427220")[index % 4],
+                utbildning=f"Exempel: {title}", utbildningskalla="fritext", antal=(1, 4, 12, 24)[index % 4],
+                datumtyp="intervall" if interval else "exakt",
+                onskat_datum=None if interval else start,
+                onskat_startdatum=start if interval else None,
+                onskat_slutdatum=end if interval else None,
+                onskad_ort=None if index % 3 == 0 else "Göteborg",
+                lokalansvar="kund" if own_venue else "sakerhetsutbildarna",
+                lokaladress="Exempelgatan 2, Göteborg" if own_venue else None,
+                status="pending",
+            )
+            booking["datum"] = f"{start} – {end}" if interval else start
+            booking["ort"] = booking["onskad_ort"]
+            booking["lokal"] = (booking["lokaladress"] if own_venue
+                                else "Säkerhetsutbildarna ordnar lokalen")
+            booking_id = _insert_booking(cursor, tuple(booking), tuple(booking.values()))
+            _execute(cursor, "UPDATE dev_booking_scenario_seeds SET booking_id = %s "
+                     "WHERE user_id = %s AND scenario = %s", (booking_id, customer[0], key))
+            _record_history(cursor, booking_id, "pending", "pending", "customer",
+                            "Exempeldata: En fiktiv utbildningsförfrågan att öva på.", customer[0], kind="demo")
+
+            def change_status(status, actor, note):
+                _execute(cursor, "UPDATE bookings SET status = %s WHERE id = %s", (status, booking_id))
+                _record_history(cursor, booking_id, booking["status"], status, actor,
+                                f"Exempeldata: {note}", admin[0] if actor == "admin" else customer[0])
+                booking["status"] = status
+
+            def propose(offset, delivery_status="disabled"):
+                proposed_date = (today + timedelta(days=days + offset)).isoformat()
+                _execute(cursor, "INSERT INTO booking_proposals (booking_id, proposed_date, proposed_city, "
+                         "proposed_venue, state, created_at, delivery_status) "
+                         "VALUES (%s, %s, %s, %s, 'pending', %s, %s) RETURNING id",
+                         (booking_id, proposed_date, "Uppsala", "Exempellokalen, Övningsgatan 3, Uppsala",
+                          _now(), delivery_status))
+                proposal_id = cursor.fetchone()[0]
+                change_status("awaiting_response", "admin", "Datumförslag skapat. Inväntar kundens svar.")
+                note = ("Ett misslyckat e-postutskick är simulerat. Inget mejl har skickats."
+                        if delivery_status == "failed" else "Inget mejl har skickats. Förslaget finns i kundportalen.")
+                _record_history(cursor, booking_id, None, None, "system", f"Exempeldata: {note}",
+                                kind="delivery", is_private=True)
+                return proposal_id, proposed_date
+
+            def respond(proposal_id, action, proposed_date=None):
+                state, status, note = {
+                    "new_date": ("declined", "new_date_requested", "Kunden har begärt ett nytt datumförslag."),
+                    "accept": ("accepted", "accepted", "Kunden har accepterat datumförslaget."),
+                    "cancel": ("cancelled", "cancelled", "Kunden har avbrutit bokningen."),
+                }[action]
+                _execute(cursor, "UPDATE booking_proposals SET state = %s, response = %s, responded_at = %s "
+                         "WHERE id = %s", (state, action, _now(), proposal_id))
+                if action == "accept":
+                    _execute(cursor, "UPDATE bookings SET faststallt_datum = %s, faststalld_ort = %s, "
+                             "faststalld_lokal = %s WHERE id = %s",
+                             (proposed_date, "Uppsala", "Exempellokalen, Övningsgatan 3, Uppsala", booking_id))
+                change_status(status, "customer", note)
+
+            change_status("registered", "admin", "Administratören har registrerat förfrågan.")
+            if target != "registered":
+                proposal_id, proposed_date = propose(2, "failed" if key == "failed_delivery" else "disabled")
+                if key == "second_proposal":
+                    respond(proposal_id, "new_date")
+                    proposal_id, proposed_date = propose(7)
+                elif target == "new_date_requested":
+                    respond(proposal_id, "new_date")
+                elif target in {"accepted", "rescheduled", "completed"}:
+                    respond(proposal_id, "accept", proposed_date)
+                    if target != "accepted":
+                        change_status(target, "admin", "Administratören har markerat bokningen som "
+                                      + ("ombokad." if target == "rescheduled" else "slutförd."))
+                elif key == "cancelled_customer":
+                    respond(proposal_id, "cancel")
+                elif key == "cancelled_admin":
+                    _execute(cursor, "UPDATE booking_proposals SET state = 'cancelled' WHERE id = %s", (proposal_id,))
+                    change_status("cancelled", "admin", "Administratören har avbrutit bokningen.")
+
+            _record_history(cursor, booking_id, target, target, "admin",
+                            "Exempeldata: Intern övningsanteckning. Kontrollera lokal och deltagarantal; "
+                            "den här anteckningen visas bara för administratörer.",
+                            admin[0], kind="note", is_private=True)
+            _record_history(cursor, booking_id, target, target, "system",
+                            f"Exempeldata – prova själv: {guide}", kind="demo")
+            # These examples already have complete, explicitly fictional history.
+            # Do not append the generic startup history on the next restart.
+            _execute(cursor, "INSERT INTO dev_booking_history_seeds (booking_id) VALUES (%s)", (booking_id,))
+            booking_ids.append(booking_id)
+        logger.debug("Exempelflöden förberedda; antal=%s.", len(booking_ids))
+        return booking_ids
+
+
+def ensure_dev_booking_history(admin_email, db_path):
+    """Append clearly marked demo events once per booking, only from dev startup."""
+    status_events = {
+        "pending": ("customer", "Förfrågan har skickats in och inväntar handläggning."),
+        "registered": ("admin", "Administratören har registrerat förfrågan."),
+        "awaiting_response": ("admin", "Ett datumförslag inväntar kundens svar."),
+        "new_date_requested": ("customer", "Kunden har begärt ett nytt datumförslag."),
+        "accepted": ("customer", "Kunden har accepterat datumförslaget. Utbildningen är bekräftad."),
+        "rescheduled": ("admin", "Administratören har markerat bokningen som ombokad."),
+        "completed": ("admin", "Administratören har markerat utbildningen som slutförd."),
+        "cancelled": ("admin", "Administratören har avbrutit bokningen."),
+    }
+    with _cursor(db_path, "ensure_dev_booking_history") as cursor:
+        # Reserve the development administrator before any reads, also avoiding
+        # read-to-write upgrade races between simultaneous SQLite startups.
+        _execute(cursor, "UPDATE users SET name = name WHERE email = %s AND role = 'admin' RETURNING id",
+                 (admin_email,))
+        admin = cursor.fetchone()
+        if admin is None:
+            logger.debug("Exempelhistorik hoppades över; utvecklingsadministratör saknas.")
+            return []
+        _execute(cursor, "CREATE TABLE IF NOT EXISTS dev_booking_history_seeds ("
+                 "booking_id INTEGER PRIMARY KEY REFERENCES bookings(id) ON DELETE CASCADE)")
+        _execute(cursor, "SELECT b.id FROM bookings b LEFT JOIN dev_booking_history_seeds s "
+                 "ON s.booking_id = b.id WHERE s.booking_id IS NULL ORDER BY b.id")
+        booking_ids = [row[0] for row in cursor.fetchall()]
+        seeded_ids = []
+        for booking_id in booking_ids:
+            booking = _lock_booking(cursor, booking_id)
+            if booking is None:
+                continue
+            _execute(cursor, "INSERT INTO dev_booking_history_seeds (booking_id) VALUES (%s) "
+                     "ON CONFLICT (booking_id) DO NOTHING RETURNING booking_id", (booking_id,))
+            if cursor.fetchone() is None:
+                continue
+            status = booking["status"]
+            _record_history(cursor, booking_id, status, status, "admin",
+                            "Exempeldata: Administratören har granskat förfrågan.", admin[0], kind="demo")
+            actor, note = status_events.get(status, ("admin", "Bokningens aktuella status har granskats."))
+            actor_id = admin[0]
+            if actor == "customer":
+                _execute(cursor, "SELECT id FROM users WHERE email = %s", (booking["email"],))
+                customer = cursor.fetchone()
+                actor_id = customer[0] if customer else None
+                if customer is None:
+                    actor = "system"
+            # These are sample descriptions of the current state, not real
+            # transitions. Never change booking fields, proposals or prior logs.
+            _record_history(cursor, booking_id, status, status, actor,
+                            f"Exempeldata: {note}", actor_id, kind="demo")
+            _record_history(cursor, booking_id, status, status, "admin",
+                            "Exempeldata: Stäm av lokal och praktiska detaljer med kunden inför utbildningen.",
+                            admin[0], kind="note", is_private=True)
+            seeded_ids.append(booking_id)
+        logger.debug("Exempelhistorik förberedd; antal_bokningar=%s.", len(seeded_ids))
+        return seeded_ids
+
+
+def _password_identity(email, password, db_path, *, require_verified):
+    """Verify credentials and upgrade a legacy password without returning it."""
     with _cursor(db_path, "authenticate_user") as cursor:
         _execute(
             cursor,
-            "SELECT id, name, organization_number, email, role, password FROM users "
-            "WHERE email = %s",
-            (email,),
+            "SELECT id, name, organization_number, email, role, password, email_verified FROM users "
+            "WHERE LOWER(email) = LOWER(%s) "
+            "ORDER BY CASE WHEN email = %s THEN 0 ELSE 1 END, id LIMIT 1",
+            (email, email),
         )
         user = cursor.fetchone()
+        if user is None or (require_verified and not user[6]):
+            logger.debug("Autentisering misslyckades.")
+            return None
+        valid, needs_upgrade = verify_password(user[5], password)
+        if not valid:
+            logger.debug("Autentisering misslyckades.")
+            return None
+        if needs_upgrade:
+            # Compare the old value so a concurrent password change wins.
+            _execute(cursor, "UPDATE users SET password = %s WHERE id = %s AND password = %s",
+                     (hash_password(password), user[0], user[5]))
+            if cursor.rowcount != 1:
+                return None
+    logger.debug("Autentisering slutförd; godkänd=true.")
+    return user[:5]
 
+
+def authenticate_user(email, password, db_path):
+    """Only verified accounts may open an authenticated session."""
+    return _password_identity(email, password, db_path, require_verified=True)
+
+
+def issue_email_verification(email, password, db_path):
+    """Create a single-use 24-hour link; limit sends to one per minute/account."""
+    user = _password_identity(email, password, db_path, require_verified=False)
     if user is None:
-        logger.debug("Autentisering misslyckades.")
         return None
-    stored_password = user[5]
-    if (
-        stored_password.startswith(("scrypt:", "pbkdf2:"))
-        and stored_password.count("$") == 2
-    ):
-        try:
-            valid = check_password_hash(stored_password, password)
-        except ValueError:
-            logger.warning("Autentisering misslyckades; ogiltigt lösenordshashformat.")
-            valid = False
-    else:
-        # Existing accounts remain usable until a separate password migration.
-        valid = secrets.compare_digest(
-            stored_password.encode("utf-8"), password.encode("utf-8")
-        )
-    logger.debug("Autentisering slutförd; godkänd=%s.", valid)
-    return user[:5] if valid else None
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    now = int(time.time())
+    with _cursor(db_path, "issue_email_verification") as cursor:
+        # Share the account lock with verification. A no-op UPDATE also obtains
+        # SQLite's write lock before reading/rotating the token.
+        _execute(cursor, "UPDATE users SET email_verified = email_verified "
+                 "WHERE id = %s AND email_verified = 0 RETURNING id", (user[0],))
+        if cursor.fetchone() is None:
+            return None
+        _execute(cursor,
+                 "INSERT INTO user_email_verifications (user_id, token_hash, expires_at, sent_at) "
+                 "SELECT id, %s, %s, %s FROM users WHERE id = %s AND email_verified = 0 "
+                 "ON CONFLICT (user_id) DO UPDATE SET token_hash = excluded.token_hash, "
+                 "expires_at = excluded.expires_at, sent_at = excluded.sent_at "
+                 "WHERE user_email_verifications.sent_at <= %s RETURNING user_id",
+                 (digest, now + 86400, now, user[0], now - 60))
+        issued = cursor.fetchone()
+    return token if issued else None
+
+
+def _verification_digest(token):
+    if not isinstance(token, str) or len(token) != 43 or not token.isascii():
+        return None
+    if not all(char.isalnum() or char in "_-" for char in token):
+        return None
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def get_email_verification(token, db_path):
+    """Check a link without consuming it (mail scanners may follow GET links)."""
+    digest = _verification_digest(token)
+    if digest is None:
+        return False
+    with _cursor(db_path, "get_email_verification") as cursor:
+        _execute(cursor,
+                 "SELECT v.user_id FROM user_email_verifications v "
+                 "JOIN users u ON u.id = v.user_id "
+                 "WHERE v.token_hash = %s AND v.expires_at > %s AND u.email_verified = 0",
+                 (digest, int(time.time())))
+        return cursor.fetchone() is not None
+
+
+def get_email_verification_recipient(token, db_path):
+    """Return the account's stored address, never an address from the request."""
+    digest = _verification_digest(token)
+    if digest is None:
+        return None
+    with _cursor(db_path, "get_email_verification_recipient") as cursor:
+        _execute(cursor,
+                 "SELECT u.email FROM user_email_verifications v "
+                 "JOIN users u ON u.id = v.user_id "
+                 "WHERE v.token_hash = %s AND v.expires_at > %s AND u.email_verified = 0",
+                 (digest, int(time.time())))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+
+def verify_email_token(token, db_path):
+    """Atomically consume a valid link; never authenticate the browser."""
+    digest = _verification_digest(token)
+    if digest is None:
+        return False
+    with _cursor(db_path, "verify_email_token") as cursor:
+        # Lock the account before consuming the token, in the same order as
+        # resends. Re-read the token after any concurrent rotation has committed.
+        _execute(cursor,
+                 "UPDATE users SET email_verified = email_verified WHERE email_verified = 0 AND id = "
+                 "(SELECT user_id FROM user_email_verifications "
+                 "WHERE token_hash = %s AND expires_at > %s) RETURNING id",
+                 (digest, int(time.time())))
+        user = cursor.fetchone()
+        if user is None:
+            return False
+        _execute(cursor, "DELETE FROM user_email_verifications "
+                 "WHERE user_id = %s AND token_hash = %s AND expires_at > %s RETURNING user_id",
+                 (user[0], digest, int(time.time())))
+        if cursor.fetchone() is None:
+            return False
+        _execute(cursor, "UPDATE users SET email_verified = 1 WHERE id = %s", (user[0],))
+    return True
+
+
+def revoke_email_verification(token, db_path):
+    """Remove only this failed delivery so a later attempt can retry safely."""
+    digest = _verification_digest(token)
+    if digest is None:
+        return False
+    with _cursor(db_path, "revoke_email_verification") as cursor:
+        _execute(cursor, "DELETE FROM user_email_verifications WHERE token_hash = %s", (digest,))
+        return cursor.rowcount == 1
 
 
 def login_user(email, password, role, db_path):
@@ -553,10 +877,10 @@ def get_user_role(user_id, db_path):
 def get_user_identity(user_id, db_path):
     """Read the current identity rather than authorizing a cached session email."""
     with _cursor(db_path, "get_user_identity") as cursor:
-        _execute(cursor, "SELECT id, name, email, organization_number, role "
+        _execute(cursor, "SELECT id, name, email, organization_number, role, email_verified "
                  "FROM users WHERE id = %s", (user_id,))
         row = cursor.fetchone()
-        return dict(zip(("id", "name", "email", "organization_number", "role"), row)) if row else None
+        return dict(zip(("id", "name", "email", "organization_number", "role", "email_verified"), row)) if row else None
 
 
 def get_booking_by_name(name, db_path):
@@ -590,7 +914,7 @@ _PROPOSAL_COLUMNS = (
 )
 _HISTORY_COLUMNS = (
     "id", "booking_id", "from_status", "to_status", "actor", "actor_id",
-    "note", "created_at", "kind", "is_private",
+    "note", "created_at", "kind", "is_private", "actor_name",
 )
 _UNSET = object()
 
@@ -601,12 +925,19 @@ def _now():
 
 def _record_history(cursor, booking_id, from_status, to_status, actor, note,
                     actor_id=None, *, kind="status", is_private=False):
+    # Preserve the name at the time of the action, even if the account is later
+    # renamed or removed. Read it from the database, never from form/session names.
+    actor_name = None
+    if actor_id is not None:
+        _execute(cursor, "SELECT name FROM users WHERE id = %s", (actor_id,))
+        user = cursor.fetchone()
+        actor_name = user[0] if user else None
     _execute(
         cursor,
         "INSERT INTO booking_history (booking_id, from_status, to_status, actor, "
-        "actor_id, note, created_at, kind, is_private) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (booking_id, from_status, to_status, actor, actor_id, note, _now(), kind, int(is_private)),
+        "actor_id, note, created_at, kind, is_private, actor_name) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (booking_id, from_status, to_status, actor, actor_id, note, _now(), kind, int(is_private), actor_name),
     )
 
 
@@ -647,13 +978,35 @@ def get_booking_proposals(booking_id, db_path):
         return [dict(zip(_PROPOSAL_COLUMNS, row)) for row in cursor.fetchall()]
 
 
-def get_booking_history(booking_id, db_path, include_private=True):
-    query = f"SELECT {', '.join(_HISTORY_COLUMNS)} FROM booking_history WHERE booking_id = %s"
+def get_booking_history(booking_id, db_path, include_private=True, *, include_actor_details=False):
+    columns = ", ".join(
+        "NULL AS actor_name" if name == "actor_name" and not include_actor_details else f"h.{name}"
+        for name in _HISTORY_COLUMNS
+    )
+    if include_actor_details:
+        columns += ", u.name AS actor_current_name"
+    query = f"SELECT {columns} FROM booking_history h"
+    if include_actor_details:
+        query += " LEFT JOIN users u ON u.id = h.actor_id"
+    query += " WHERE h.booking_id = %s"
     if not include_private:
-        query += " AND is_private = 0"
+        query += " AND h.is_private = 0"
     with _cursor(db_path, "get_booking_history") as cursor:
-        _execute(cursor, query + " ORDER BY id ASC", (booking_id,))
-        return [dict(zip(_HISTORY_COLUMNS, row)) for row in cursor.fetchall()]
+        _execute(cursor, query + " ORDER BY h.id ASC", (booking_id,))
+        names = (*_HISTORY_COLUMNS, "actor_current_name") if include_actor_details else _HISTORY_COLUMNS
+        return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+
+def list_booking_audit_log(db_path, *, limit=51, offset=0):
+    """Read a bounded page of booking actions, newest first, for administrators."""
+    columns = ", ".join(f"h.{name}" for name in _HISTORY_COLUMNS)
+    with _cursor(db_path, "list_booking_audit_log") as cursor:
+        _execute(cursor, f"SELECT {columns}, u.name AS actor_current_name, b.utbildning "
+                 "FROM booking_history h JOIN bookings b ON b.id = h.booking_id "
+                 "LEFT JOIN users u ON u.id = h.actor_id "
+                 "ORDER BY h.id DESC LIMIT %s OFFSET %s", (limit, offset))
+        return [dict(zip((*_HISTORY_COLUMNS, "actor_current_name", "utbildning"), row))
+                for row in cursor.fetchall()]
 
 
 def _lock_booking(cursor, booking_id, email=None):
@@ -798,15 +1151,22 @@ def add_booking_note(booking_id, note, db_path, actor_id=None):
         return True
 
 
-def claim_proposal_delivery(proposal_id, db_path):
+def claim_proposal_delivery(proposal_id, db_path, actor_id=None):
     """Only one request may send/retry a still-current unanswered proposal."""
     with _cursor(db_path, "claim_proposal_delivery") as cursor:
         _execute(cursor, "UPDATE booking_proposals SET delivery_status = 'sending' "
                  "WHERE id = %s AND state = 'pending' "
                  "AND delivery_status IN ('pending', 'failed', 'disabled') "
-                 "AND EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_id AND b.status = 'awaiting_response')",
+                 "AND EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_id AND b.status = 'awaiting_response') "
+                 "RETURNING booking_id",
                  (proposal_id,))
-        return cursor.rowcount == 1
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        _record_history(cursor, row[0], None, None, "admin" if actor_id is not None else "system",
+                        f"E-postutskick av datumförslag #{proposal_id} påbörjat.",
+                        actor_id, kind="delivery", is_private=True)
+        return True
 
 
 def finish_proposal_delivery(proposal_id, delivery_status, db_path):
@@ -903,11 +1263,13 @@ def _create_workflow_tables(cursor, id_column):
         to_status TEXT,
         actor TEXT NOT NULL,
         actor_id INTEGER,
+        actor_name TEXT,
         note TEXT NOT NULL,
         created_at TEXT NOT NULL,
         kind TEXT NOT NULL DEFAULT 'status',
         is_private INTEGER NOT NULL DEFAULT 0 CHECK (is_private IN (0, 1))
     )""")
+    _migrate_booking_history(cursor)
     _execute(cursor, "CREATE INDEX IF NOT EXISTS booking_history_booking_id ON booking_history (booking_id, id)")
     # Baseline entries record the state observed at migration, not a fabricated
     # past transition. Existing IDs, statuses and customer accounts stay intact.
@@ -917,6 +1279,45 @@ def _create_workflow_tables(cursor, id_column):
              "'Befintlig bokning bevarad. Historiken börjar vid migreringen.', %s, 'baseline', 0 "
              "FROM bookings b WHERE NOT EXISTS (SELECT 1 FROM booking_history h WHERE h.booking_id = b.id)",
              (_now(),))
+
+
+def _migrate_booking_history(cursor):
+    """Add actor snapshots without rewriting historical events or guessing names."""
+    if isinstance(cursor, sqlite3.Cursor):
+        cursor.execute("PRAGMA table_info(booking_history)")
+        columns = {row[1] for row in cursor.fetchall()}
+    else:
+        _execute(cursor, "SELECT column_name FROM information_schema.columns "
+                 "WHERE table_schema = current_schema() AND table_name = 'booking_history'")
+        columns = {row[0] for row in cursor.fetchall()}
+    if "actor_name" not in columns:
+        _execute(cursor, "ALTER TABLE booking_history ADD COLUMN actor_name TEXT")
+
+
+def _migrate_users(cursor):
+    """Preserve existing accounts and remove legacy plaintext without resets."""
+    if isinstance(cursor, sqlite3.Cursor):
+        cursor.execute("PRAGMA table_info(users)")
+        columns = {row[1] for row in cursor.fetchall()}
+    else:
+        _execute(cursor, "SELECT column_name FROM information_schema.columns "
+                 "WHERE table_schema = current_schema() AND table_name = 'users'")
+        columns = {row[0] for row in cursor.fetchall()}
+    if "email_verified" not in columns:
+        # Grandfather existing accounts; public signup explicitly stores 0.
+        _execute(cursor, "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1 "
+                 "CHECK (email_verified IN (0, 1))")
+    _execute(cursor, "SELECT id, password FROM users")
+    for user_id, stored in cursor.fetchall():
+        if not is_password_hash(stored):
+            _execute(cursor, "UPDATE users SET password = %s WHERE id = %s AND password = %s",
+                     (hash_password(stored), user_id, stored))
+    _execute(cursor, """CREATE TABLE IF NOT EXISTS user_email_verifications (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at INTEGER NOT NULL,
+        sent_at INTEGER NOT NULL
+    )""")
 
 
 def create_database(db_path):
@@ -967,6 +1368,8 @@ def create_database(db_path):
                 email TEXT NOT NULL UNIQUE,
                 password TEXT NOT NULL,
                 role TEXT,
-                status TEXT NOT NULL DEFAULT 'pending'
+                status TEXT NOT NULL DEFAULT 'pending',
+                email_verified INTEGER NOT NULL DEFAULT 1 CHECK (email_verified IN (0, 1))
             )""",
         )
+        _migrate_users(cursor)

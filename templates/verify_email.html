@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Bekräfta e-postadress{% endblock %}
+{% block head %}
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/public.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/auth.css') }}">
+{% endblock %}
+{% block content %}
+<main class="public-page auth-page">
+  <div class="public-container auth-layout">
+    <section class="auth-intro" aria-labelledby="verification-intro-heading">
+      <a class="public-back" href="{{ url_for('user_page.index') }}"><span aria-hidden="true">&larr;</span> Till startsidan</a>
+      <p class="public-kicker">Välkommen till Kursplan</p>
+      <h2 id="verification-intro-heading">Bekräfta din<br>e-postadress.</h2>
+      <p class="public-intro">När du har verifierat din adress kan du logga in och skicka utbildningsförfrågningar.</p>
+    </section>
+    <section class="auth-panel" aria-labelledby="verify-heading">
+      <div class="auth-panel-heading">
+        <h1 id="verify-heading">Verifiera e-postadress</h1>
+        {% if not error %}<p>Tryck på knappen för att bekräfta att det här är din e-postadress.</p>{% endif %}
+      </div>
+      {% if error %}
+      <p class="auth-error" role="alert">{{ error }}</p>
+      <p class="auth-help"><a href="{{ url_for('user_page.resend_verification') }}">Skicka en ny verifieringslänk</a></p>
+      {% else %}
+      <form class="auth-form" method="post" action="{{ url_for('user_page.verify_email') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="verification_token" value="{{ verification_token }}">
+        <button class="public-button primary" type="submit">Verifiera min e-postadress</button>
+      </form>
+      {% endif %}
+      <p class="auth-help"><a href="{{ url_for('user_page.login') }}">Till inloggningen</a></p>
+    </section>
+  </div>
+</main>
+{% endblock %}

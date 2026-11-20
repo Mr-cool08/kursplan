@@ -60,6 +60,7 @@ def dashboard_client(project_root, monkeypatch):
     monkeypatch.setattr(database, "get_user_identity", lambda *args: {
         "id": 1, "name": "Anna " + "Långtefternamn" * 12, "email": CUSTOMER_EMAIL,
         "organization_number": "5566778899", "role": "user",
+        "email_verified": True,
     })
     monkeypatch.setenv("send_mail", "0")
     client = app.test_client()
@@ -94,12 +95,12 @@ class _DashboardParser(HTMLParser):
             self.csrf_tokens.append(attributes.get("value"))
 
 
-def _open_dashboard(page, dashboard_client):
+def _open_dashboard(page, dashboard_client, path="/dashboard"):
     client, _ = dashboard_client
 
     def serve_local(route):
         url = urlsplit(route.request.url)
-        response = client.get(url.path)
+        response = client.get(url.path + (f"?{url.query}" if url.query else ""))
         route.fulfill(
             status=response.status_code,
             body=response.get_data(),
@@ -108,7 +109,7 @@ def _open_dashboard(page, dashboard_client):
 
     # Serve Flask's actual HTML and static assets locally; no external requests.
     page.route("http://dashboard.test/**", serve_local)
-    page.goto("http://dashboard.test/dashboard")
+    page.goto("http://dashboard.test" + path)
 
 
 def test_dashboard_cards_preserve_fields_status_and_csrf(dashboard_client):
@@ -123,9 +124,11 @@ def test_dashboard_cards_preserve_fields_status_and_csrf(dashboard_client):
     for article in parser.articles:
         assert "booking-card" in article.get("class", "").split()
         assert article.get("aria-labelledby") in parser.headings
-    assert len(parser.forms) == 1
-    assert parser.forms[0]["method"].lower() == "post"
-    assert parser.forms[0]["action"] == "/cancel_booking/11"
+    assert len(parser.forms) == 2
+    assert parser.forms[0]["method"].lower() == "get"
+    assert parser.forms[0]["action"] == "/dashboard"
+    assert parser.forms[1]["method"].lower() == "post"
+    assert parser.forms[1]["action"] == "/cancel_booking/11"
     assert len(parser.csrf_tokens) >= 1 and parser.csrf_tokens[0]
     with client.session_transaction() as state:
         assert parser.csrf_tokens[0] in state.values()
@@ -165,10 +168,22 @@ def test_dashboard_cards_fit_mobile_and_desktop(page, dashboard_client, width):
     first = cards.nth(0).bounding_box()
     second = cards.nth(1).bounding_box()
     assert first and second
-    if width <= 390:
-        assert second["y"] >= first["y"] + first["height"]
-    elif width == 1280:
-        assert abs(first["y"] - second["y"]) <= 1
+    assert second["y"] >= first["y"] + first["height"]
+
+    filters = page.locator(".booking-status-filter")
+    results = page.locator(".booking-results")
+    expect(filters).to_be_visible()
+    expect(filters.get_by_role("checkbox")).to_have_count(len(database.BOOKING_STATUSES))
+    for checkbox in filters.get_by_role("checkbox").all():
+        expect(checkbox).to_be_visible()
+    filter_box = filters.bounding_box()
+    results_box = results.bounding_box()
+    assert filter_box and results_box
+    if width == 1280:
+        assert filter_box["x"] + filter_box["width"] <= results_box["x"]
+        assert filter_box["y"] < results_box["y"] + results_box["height"]
+    else:
+        assert filter_box["y"] + filter_box["height"] <= results_box["y"]
 
     controls = [page.get_by_role("link", name="Gör ny bokning"),
                 pending.get_by_role("button", name="Avbryt"),
@@ -186,6 +201,12 @@ def test_dashboard_cards_fit_mobile_and_desktop(page, dashboard_client, width):
         assert (focus["outline"] != "none" and focus["width"] > 0) or focus["shadow"] != "none"
 
     controls[0].focus()
+    for status_code, label in database.BOOKING_STATUSES.items():
+        status = "Inväntar ditt svar" if status_code == "awaiting_response" else label
+        page.keyboard.press("Tab")
+        expect(page.get_by_role("checkbox", name=status, exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Filtrera", exact=True)).to_be_focused()
     page.keyboard.press("Tab")
     expect(pending.get_by_role("link", name="Visa bokning")).to_be_focused()
     page.keyboard.press("Tab")
@@ -212,6 +233,38 @@ def test_empty_dashboard_offers_booking_on_mobile(page, dashboard_client):
     empty_state_link = page.get_by_role("link", name="Hitta din utbildning")
     expect(empty_state_link).to_be_visible()
     expect(empty_state_link).to_have_attribute("href", "/booking")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 1280])
+def test_response_notice_opens_proposals_hidden_by_status_filter(page, dashboard_client, width):
+    _, bookings = dashboard_client
+    bookings.append(bookings[0] | {
+        "id": 14,
+        "utbildning": "HLR med datumförslag",
+        "status": "awaiting_response",
+    })
+    page.set_viewport_size({"width": width, "height": 844})
+    _open_dashboard(page, dashboard_client, "/dashboard?status=pending")
+
+    expect(page.get_by_role("article")).to_have_count(1)
+    expect(page.get_by_role("checkbox", name="Ny förfrågan", exact=True)).to_be_checked()
+    notice = page.locator(".response-notice")
+    expect(notice).to_be_visible()
+    expect(notice).to_contain_text("1 datumförslag väntar på ditt svar.")
+    proposal_link = notice.get_by_role("link", name="Visa datumförslag", exact=True)
+    expect(proposal_link).to_have_attribute("href", "/dashboard?status=awaiting_response")
+    proposal_link.click()
+
+    expect(page.get_by_role("article")).to_have_count(1)
+    proposal = page.get_by_role("article")
+    expect(proposal.get_by_role("heading", level=3)).to_have_text("HLR med datumförslag")
+    expect(proposal.get_by_role("link", name="Besvara datumförslag")).to_have_attribute(
+        "href", "/bookings/14"
+    )
+    expect(proposal.get_by_role("button", name="Avbryt", exact=True)).to_have_count(0)
+    expect(page.get_by_role("checkbox", name="Inväntar ditt svar", exact=True)).to_be_checked()
+    expect(page.get_by_role("checkbox", name="Ny förfrågan", exact=True)).not_to_be_checked()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
@@ -262,7 +315,7 @@ def test_dashboard_text_actions_and_all_statuses_have_readable_contrast(
     text = page.locator(
         "main h1, main h2, main h3, main p, main dt, main dd, "
         "main .booking-reference, main .booking-count, main .status-pill, "
-        "main .workflow-message, main a, main button"
+        "main .workflow-message, main a, main button, main legend, main label"
     )
     failures = [
         result for result in _text_contrasts(text)

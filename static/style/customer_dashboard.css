@@ -1,0 +1,352 @@
+/* Only the customer overview uses this layout; shared portal views keep theirs. */
+.customer-dashboard {
+    --overview-ink: #182b48;
+    --overview-muted: #425570;
+    --overview-line: #c3cfde;
+    --overview-paper: #fefefe;
+    padding: clamp(28px, 4vw, 52px) clamp(16px, 3vw, 48px) 32px;
+    background: #f3f5f8;
+}
+
+.customer-dashboard .dashboard-container {
+    max-width: 1280px;
+}
+
+.customer-dashboard .dashboard-header {
+    align-items: flex-start;
+    gap: 24px;
+    padding: 0 0 28px;
+    border: 0;
+    border-bottom: 1px solid var(--overview-line);
+    border-radius: 0;
+    background: transparent;
+}
+
+.customer-dashboard .dashboard-header > div {
+    flex: 1;
+}
+
+.customer-dashboard .dashboard-kicker {
+    color: var(--overview-muted);
+    font-size: 0.8125rem;
+    letter-spacing: 0.06em;
+}
+
+.customer-dashboard .dashboard-header h1 {
+    max-width: 34ch;
+    color: var(--overview-ink);
+    font-size: clamp(1.625rem, 2.8vw, 2.125rem);
+    line-height: 1.3;
+}
+
+.customer-dashboard .dashboard-intro {
+    max-width: 60ch;
+    margin-top: 10px;
+    color: var(--overview-muted);
+}
+
+.customer-dashboard .dashboard-header .dashboard-button.primary {
+    margin-top: 12px;
+}
+
+.customer-dashboard .dashboard-header a:focus-visible {
+    outline-color: #2458b8;
+}
+
+.customer-dashboard .bookings-heading {
+    margin: 30px 0 20px;
+}
+
+.customer-dashboard h2 {
+    font-size: 1.375rem;
+}
+
+.customer-dashboard .booking-count {
+    color: var(--overview-muted);
+    font-weight: 400;
+}
+
+.customer-dashboard .dashboard-layout,
+.customer-dashboard .booking-results {
+    min-width: 0;
+}
+
+.customer-dashboard .dashboard-layout.has-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 24px;
+}
+
+.customer-dashboard .booking-status-filter {
+    width: 100%;
+    margin: 0;
+    padding: 0 0 24px;
+    border: 0;
+    border-bottom: 1px solid var(--overview-line);
+    border-radius: 0;
+    background: transparent;
+}
+
+.customer-dashboard .booking-status-filter fieldset {
+    margin-bottom: 16px;
+}
+
+.customer-dashboard .booking-status-filter legend {
+    font-size: 1rem;
+}
+
+.customer-dashboard .booking-status-filter p {
+    margin: 8px 0 16px;
+    color: var(--overview-muted);
+    line-height: 1.6;
+}
+
+.customer-dashboard .booking-status-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.customer-dashboard .booking-status-option {
+    gap: 9px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid #98aac1;
+    border-radius: 6px;
+    background: var(--overview-paper);
+    color: var(--overview-ink);
+}
+
+.customer-dashboard .booking-status-option:hover {
+    border-color: #607796;
+    background: #e8eef6;
+}
+
+.customer-dashboard .booking-status-option:has(input:checked) {
+    border-color: #2458b8;
+    background: #e2ebf8;
+    color: #193f7a;
+}
+
+.customer-dashboard .booking-status-option:focus-within {
+    outline: 3px solid #2458b8;
+    outline-offset: 3px;
+}
+
+.customer-dashboard .booking-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+}
+
+.customer-dashboard .booking-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    padding: 24px;
+    border: 1px solid #98aac1;
+    border-radius: 8px;
+    background: var(--overview-paper);
+}
+
+.customer-dashboard .booking-card-summary {
+    min-width: 0;
+}
+
+.customer-dashboard .booking-card-topline {
+    justify-content: flex-start;
+    gap: 8px 12px;
+    margin: 0 0 12px;
+    padding: 0;
+    border: 0;
+}
+
+.customer-dashboard .booking-reference {
+    color: var(--overview-muted);
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.customer-dashboard .status-pill {
+    max-width: 100%;
+    border: 0;
+    border-radius: 4px;
+    line-height: 1.5;
+}
+
+.customer-dashboard .booking-card h3 {
+    margin: 0;
+    font-size: 1.1875rem;
+    line-height: 1.45;
+}
+
+.customer-dashboard.workflow-page .response-prompt {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.customer-dashboard .booking-details {
+    align-content: start;
+    gap: 16px 24px;
+}
+
+.customer-dashboard .booking-details > div:first-child dd {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.customer-dashboard dt {
+    margin-bottom: 4px;
+    color: var(--overview-muted);
+    font-weight: 400;
+    font-size: 0.8125rem;
+}
+
+.customer-dashboard dd {
+    font-size: 1rem;
+    line-height: 1.55;
+}
+
+.customer-dashboard .booking-card-actions {
+    justify-content: flex-end;
+    gap: 12px;
+    margin: 0;
+    padding: 16px 0 0;
+    border-top: 1px solid var(--overview-line);
+}
+
+.customer-dashboard .booking-card-actions form {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.customer-dashboard .dashboard-button,
+.customer-dashboard .cancel-button {
+    border-radius: 6px;
+    font-size: 0.875rem;
+}
+
+.customer-dashboard .cancel-button {
+    border-color: transparent;
+    background: transparent;
+}
+
+.customer-dashboard .dashboard-button.primary > .visually-hidden {
+    font: inherit;
+}
+
+.customer-dashboard.workflow-page .booking-card.needs-response {
+    border: 2px solid #9a5b17;
+    background: #fff9f0;
+}
+
+.customer-dashboard .response-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px 24px;
+    margin: 24px 0;
+    border-radius: 8px;
+}
+
+.customer-dashboard .response-notice > div {
+    flex: 1 1 300px;
+    min-width: 0;
+}
+
+.customer-dashboard .response-notice p {
+    margin: 4px 0 0;
+    color: inherit;
+    font-size: 0.875rem;
+}
+
+.customer-dashboard .response-notice a {
+    gap: 12px;
+}
+
+.customer-dashboard .empty-state {
+    border: 1px dashed #98aac1;
+    border-radius: 8px;
+}
+
+.customer-dashboard .dashboard-actions {
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid var(--overview-line);
+}
+
+@media (min-width: 52rem) {
+    .customer-dashboard .dashboard-layout.has-filters {
+        grid-template-columns: 216px minmax(0, 1fr);
+        gap: 28px;
+    }
+
+    .customer-dashboard .booking-status-filter {
+        padding: 4px 24px 0 0;
+        border: 0;
+        border-right: 1px solid var(--overview-line);
+    }
+
+    .customer-dashboard .booking-status-options {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+    }
+
+    .customer-dashboard .booking-status-option {
+        padding: 9px 10px;
+    }
+
+    .customer-dashboard .booking-status-filter .workflow-actions {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+}
+
+@media (min-width: 70rem) {
+    .customer-dashboard .booking-card {
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 20px 28px;
+    }
+
+    .customer-dashboard .booking-card-actions {
+        grid-column: 1 / -1;
+    }
+
+    .customer-dashboard .booking-details {
+        padding-left: 28px;
+        border-left: 1px solid var(--overview-line);
+    }
+}
+
+@media (max-width: 40rem) {
+    .customer-dashboard .dashboard-header {
+        gap: 16px;
+        padding: 0 0 24px;
+    }
+
+    .customer-dashboard .dashboard-header .dashboard-button.primary {
+        margin: 0;
+    }
+
+    .customer-dashboard .booking-status-options {
+        gap: 8px 6px;
+    }
+
+    .customer-dashboard .booking-status-option {
+        padding: 8px 10px;
+    }
+
+    .customer-dashboard .booking-card {
+        padding: 20px;
+    }
+
+    .customer-dashboard .response-notice {
+        padding: 16px;
+    }
+}

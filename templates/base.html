@@ -2,6 +2,20 @@
 {% set logo_url = url_for('static', filename='images/favicon/JKA_Logo.png') %}
 <html lang="sv">
 <head>
+    <script type="text/javascript">
+        (function(c,l,a,r,i,t,y){
+            c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+            t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+            y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+        })(window, document, "clarity", "script", "zgs5qmce8h");
+    </script>
+    <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-PCT4D2PM"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+    </script>
+
     <link rel="stylesheet" href="{{ url_for('static', filename='style/base.css') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="{{ logo_url }}">
@@ -21,12 +35,15 @@
 
     <footer>
         <hr>
-        <p>&copy; <span id="currentYear"></span> <a href="https://kursplan.se/">kursplan.se</a>. All rights reserved. Owner: Liam Suorsa.</p>
+        <p>&copy; <span id="currentYear"></span> <a href="https://kursplan.se/">kursplan.se</a>. All rights reserved. Owner: Järnvägskonsulterna i Norden AB.</p>
     </footer>
 
     <script>
-        // Get the current year
-        var year = new Date().getFullYear();
+        // Use the Swedish year even when the visitor is in another time zone.
+        var year = new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Europe/Stockholm",
+            year: "numeric"
+        }).format(new Date());
         // Set the current year in the span element
         document.getElementById("currentYear").innerHTML = year;
     </script>

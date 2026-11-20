@@ -301,7 +301,7 @@ def test_user_identity_reads_current_database_values_and_disappears_after_deleti
 
     assert database.get_user_identity(user[0], all_db_path) == {
         "id": user[0], "name": "Ändrat namn", "email": "updated@example.test",
-        "organization_number": "2222222222", "role": "admin",
+        "organization_number": "2222222222", "role": "admin", "email_verified": 1,
     }
     assert database.check_user_exists(EMAIL, all_db_path) is False
     assert database.check_user_exists("updated@example.test", all_db_path) is True
@@ -314,7 +314,9 @@ def test_user_identity_reads_current_database_values_and_disappears_after_deleti
 
 @pytest.mark.parametrize("stored_password", ["scrypt:invalid$salt$hash", "scrypt:1:bad:1$salt$hash", "pbkdf2:unknown:1$salt$hash"])
 def test_malformed_password_hashes_reject_login_without_falling_back_to_plaintext(all_db_path, stored_password):
-    database.create_user("Kund", EMAIL, stored_password, "5566778899", "user", all_db_path)
+    user = database.create_user("Kund", EMAIL, "initial-password", "5566778899", "user", all_db_path)
+    with database._cursor(all_db_path) as cursor:
+        database._execute(cursor, "UPDATE users SET password = %s WHERE id = %s", (stored_password, user[0]))
 
     assert database.authenticate_user(EMAIL, "test-only-password", all_db_path) is None
     assert database.authenticate_user(EMAIL, stored_password, all_db_path) is None

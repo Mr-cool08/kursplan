@@ -1,20 +1,25 @@
 from datetime import date
+import os
 import re
+from sqlite3 import IntegrityError
 from urllib.parse import unquote, urlsplit
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
-from werkzeug.security import generate_password_hash
+from psycopg.errors import UniqueViolation
 from csrf import (
     clear_booking_csrf_token,
     get_booking_csrf_token,
     validate_booking_csrf_token,
 )
 import database
+import gen_func
 from gen_func import read_utbildningar_from_json
+from time_display import format_swedish_time
 
 
 user_page = Blueprint('user_page', __name__,
                         template_folder='templates')
+user_page.add_app_template_filter(format_swedish_time, "swedish_time")
 
 VALID_ROLES = {"user", "admin"}
 
@@ -59,7 +64,7 @@ def _current_database_role():
         return None
 
     user = database.get_user_identity(user_id, current_app.config["DB_PATH"])
-    if user is None or user["role"] not in VALID_ROLES:
+    if user is None or user["role"] not in VALID_ROLES or not user["email_verified"]:
         current_app.logger.warning("Kundsession avvisades: kontot saknas eller har en ogiltig roll.")
         session.clear()
         return None
@@ -100,6 +105,28 @@ def _check_csrf():
         abort(400, description="Formuläret kunde inte verifieras. Ladda om sidan och försök igen.")
 
 
+def notify_booking_status(booking_id, status):
+    """Send only after a committed status change; mail cannot undo the change."""
+    booking_url = "https://kursplan.se" + url_for("user_page.booking_detail", booking_id=booking_id)
+    try:
+        # Use the booking's stored recipient, even when an administrator acts.
+        booking = database.get_booking_details_by_id(booking_id, current_app.config["DB_PATH"])
+        result = gen_func.send_booking_status_mail(booking, status, booking_url)
+    except Exception:
+        # SMTP exceptions may contain credentials, addresses or message contents.
+        current_app.logger.error("Oväntat fel vid statusmejl: booking_id=%s status=%s.", booking_id, status)
+        result = "failed"
+    if result == "sent":
+        current_app.logger.info("Statusmejl skickat: booking_id=%s status=%s.", booking_id, status)
+        flash("En bekräftelse har skickats till bokningens e-postadress.", "success")
+    elif result == "disabled":
+        current_app.logger.info("Statusmejl avstängt: booking_id=%s status=%s.", booking_id, status)
+        flash("E-post är avstängd i denna miljö; ingen bekräftelse har skickats.", "warning")
+    else:
+        current_app.logger.error("Statusmejl kunde inte skickas: booking_id=%s status=%s.", booking_id, status)
+        flash("Bokningens status är sparad, men bekräftelsen kunde inte skickas via e-post.", "warning")
+
+
 def booking_detail_context(booking, *, is_admin=False, proposal_values=None):
     db_path = current_app.config["DB_PATH"]
     proposals = database.get_booking_proposals(booking["id"], db_path)
@@ -115,7 +142,9 @@ def booking_detail_context(booking, *, is_admin=False, proposal_values=None):
     }
     return dict(
         booking=booking, proposals=proposals,
-        history=database.get_booking_history(booking["id"], db_path, include_private=is_admin),
+        history=database.get_booking_history(
+            booking["id"], db_path, include_private=is_admin, include_actor_details=True,
+        ),
         is_admin=is_admin, csrf_token=get_booking_csrf_token(),
         status_labels=database.BOOKING_STATUSES,
         customer_cancellable=database.CUSTOMER_CANCELLABLE,
@@ -272,12 +301,20 @@ def dashboard():
         return redirect(url_for('user_page.login'))
     bookings = database.list_booking_details(current_app.config["DB_PATH"], email=email)
     current_app.logger.debug("Kundöversikt hämtad med %s bokningar.", len(bookings))
+    total_bookings = len(bookings)
+    awaiting_response_count = sum(b["status"] == "awaiting_response" for b in bookings)
+    selected_statuses = set(request.args.getlist("status")) & database.BOOKING_STATUSES.keys()
+    if selected_statuses:
+        bookings = [b for b in bookings if b["status"] in selected_statuses]
 
     return render_template(
         'dashboard.html',
         name=name,
         organization_number=organization_number,
         bookings=bookings,
+        total_bookings=total_bookings,
+        awaiting_response_count=awaiting_response_count,
+        selected_statuses=selected_statuses,
         csrf_token=get_booking_csrf_token(),
         status_labels=database.BOOKING_STATUSES,
         customer_cancellable=database.CUSTOMER_CANCELLABLE,
@@ -289,29 +326,141 @@ def signup():
         _check_csrf()
         db_path = current_app.config["DB_PATH"]
         name = request.form.get('name', '').strip()
-        email = request.form.get('email', '').strip()
+        email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
         organization_number = request.form.get('organization_number', '').strip()
-        if not name or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or not password or not organization_number:
+        if (not name or len(name) > 200 or len(email) > 254
+                or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
+                or not password or len(password) > 1024
+                or not organization_number or len(organization_number) > 50):
             current_app.logger.warning("Kontoregistrering nekades: ogiltiga eller saknade formulärfält.")
             return render_template('signup.html', error='Fyll i namn, giltig e-postadress, lösenord och organisationsnummer.', csrf_token=get_booking_csrf_token()), 400
         if database.check_user_exists(email, db_path):
             current_app.logger.warning("Kontoregistrering nekades: kontot finns redan.")
             return render_template('signup.html', error='Det finns redan ett konto med denna e-postadress.', csrf_token=get_booking_csrf_token()), 400
         role = "user"
-        user = database.create_user(name, email, generate_password_hash(password), organization_number, role, db_path)
+        try:
+            user = database.create_user(
+                name, email, password, organization_number, role, db_path,
+                email_verified=False,
+            )
+        except (IntegrityError, UniqueViolation):
+            # The unique constraint also protects simultaneous registrations.
+            return render_template('signup.html', error='Det finns redan ett konto med denna e-postadress.', csrf_token=get_booking_csrf_token()), 400
         current_app.logger.info("Kundkonto skapat: user_id=%s.", user[0])
         session.clear()
-        session['user_id'] = user[0]
-        session['user_name'] = user[1]
-        session['organization_number'] = user[2]
-        session['user_email'] = user[3]
-        session['role'] = role
+        result = _send_email_verification(email, password)
+        _flash_verification_delivery(result, registration=True)
         return redirect(url_for('user_page.login'))
     else:
         return render_template('signup.html', csrf_token=get_booking_csrf_token())
-    
-    
+
+
+def _verification_url(token):
+    # A caller-controlled Host header must never choose the email link's domain.
+    base = (current_app.config.get("PUBLIC_BASE_URL")
+            or os.getenv("PUBLIC_BASE_URL"))
+    if not base:
+        if current_app.config.get("DEV_MODE"):
+            # Match the local python app.py entrypoint without trusting Host.
+            port = int(os.getenv("app_port", "80"))
+            if not 1 <= port <= 65535:
+                raise ValueError("app_port måste vara ett portnummer mellan 1 och 65535.")
+            base = f"http://127.0.0.1:{port}"
+        else:
+            base = "https://kursplan.se"
+    base = base.rstrip("/")
+    parsed = urlsplit(base)
+    local_http = (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+                  and (current_app.testing or current_app.config.get("DEV_MODE")))
+    if (not parsed.hostname or parsed.username or parsed.password or parsed.query
+            or parsed.fragment or (parsed.scheme != "https" and not local_http)):
+        raise ValueError("PUBLIC_BASE_URL måste vara en betrodd HTTPS-adress.")
+    return base + url_for("user_page.verify_email", token=token)
+
+
+def _send_email_verification(email, password):
+    db_path = current_app.config["DB_PATH"]
+    token = database.issue_email_verification(email, password, db_path)
+    if token is None:
+        return "unavailable"
+    recipient = database.get_email_verification_recipient(token, db_path)
+    if recipient is None:
+        database.revoke_email_verification(token, db_path)
+        return "failed"
+    try:
+        result = gen_func.send_verification_mail(recipient, _verification_url(token))
+    except Exception:
+        # SMTP responses may contain private addresses, credentials or the token.
+        current_app.logger.error("Verifieringsmejlet kunde inte skickas.")
+        result = "failed"
+    if result not in {"sent", "disabled", "failed"}:
+        result = "failed"
+    if result != "sent":
+        database.revoke_email_verification(token, db_path)
+    return result
+
+
+def _flash_verification_delivery(result, *, registration=False):
+    # This is only a UI hint; it never grants access to an account.
+    session["email_verification_pending"] = True
+    if result == "disabled":
+        flash("Kontot behöver verifieras, men e-postutskick är avstängda. Inget mejl har skickats. Kontakta oss för hjälp.", "verification_warning")
+    elif result == "failed":
+        flash("Verifieringsmejlet kunde inte skickas. Ditt konto finns kvar. Försök skicka en ny länk nedan, eller kontakta oss om problemet kvarstår.", "verification_error")
+    elif registration and result == "sent":
+        flash("Kontot är skapat. Vi har skickat en verifieringslänk till din e-postadress. Verifiera adressen innan du loggar in. Länken gäller i 24 timmar.", "verification_success")
+    else:
+        # Same answer for unknown accounts, wrong passwords and throttled sends.
+        flash("Om uppgifterna stämmer och kontot väntar på verifiering skickas en länk till din e-postadress. Vänta minst en minut innan du försöker igen.", "verification_success")
+
+
+@user_page.route('/verify-email/resend', methods=['GET', 'POST'])
+def resend_verification():
+    session["email_verification_pending"] = True
+    if request.method == "POST":
+        _check_csrf()
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        if (len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
+                or not password or len(password) > 1024):
+            return render_template("login.html", error="Ange en giltig e-postadress och ditt lösenord för att skicka en ny verifieringslänk.", next_url=_safe_next(request.form.get("next")), csrf_token=get_booking_csrf_token()), 400
+        result = _send_email_verification(email, password)
+        _flash_verification_delivery(result)
+        clear_booking_csrf_token()
+        return redirect(url_for("user_page.login"))
+    return redirect(url_for("user_page.login"))
+
+
+@user_page.route('/verify-email', methods=['GET', 'POST'])
+def verify_email():
+    token = (request.form.get("verification_token", "") if request.method == "POST"
+             else request.args.get("token", ""))
+    db_path = current_app.config["DB_PATH"]
+    if request.method == "POST":
+        _check_csrf()
+        if database.verify_email_token(token, db_path):
+            session.pop("email_verification_pending", None)
+            clear_booking_csrf_token()
+            flash("Din e-postadress är verifierad. Du kan nu logga in.", "success")
+            return redirect(url_for("user_page.login"))
+    elif database.get_email_verification(token, db_path):
+        # Mail scanners may follow GET links; only an explicit POST consumes it.
+        return render_template("verify_email.html", verification_token=token, csrf_token=get_booking_csrf_token())
+    return render_template("verify_email.html", error="Länken är ogiltig, har gått ut eller har redan använts. Begär en ny verifieringslänk.", csrf_token=get_booking_csrf_token()), 400
+
+
+@user_page.after_request
+def protect_auth_responses(response):
+    if request.endpoint in {
+        "user_page.signup", "user_page.login", "user_page.verify_email",
+        "user_page.resend_verification",
+    }:
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @user_page.route('/login', methods=['GET', 'POST'])
 def login():
     next_url = _safe_next(request.form.get("next") if request.method == "POST" else request.args.get("next"))
@@ -324,7 +473,7 @@ def login():
         _check_csrf()
         email = request.form.get('email', '').strip()
         password = request.form.get('password', '')
-        if not email or not password:
+        if not email or not password or len(email) > 254 or len(password) > 1024:
             current_app.logger.warning("Inloggning nekades: inloggningsuppgifter saknas.")
             return render_template('login.html', error='Ange både e-postadress och lösenord.', next_url=next_url, csrf_token=get_booking_csrf_token())
 
@@ -332,6 +481,7 @@ def login():
         if user and user[4] in VALID_ROLES:
             user_id, name, organization_number, user_email, role = user
             session.clear()
+            session.permanent = True
             session.update(
                 user_id=user_id,
                 user_name=name,
@@ -423,6 +573,7 @@ def cancel_booking(booking_id):
         flash("Bokningen kunde inte avbrytas. Kontrollera aktuell status och behörighet.", "error")
     else:
         current_app.logger.info("Bokning avbruten: booking_id=%s.", booking_id)
+        notify_booking_status(booking_id, "cancelled")
     if role == "admin":
         return redirect(url_for('admin_page.dashboard'))
     return redirect(url_for('user_page.dashboard'))
@@ -475,4 +626,6 @@ def respond_proposal(booking_id, proposal_id):
         "cancel": "Bokningen är avbruten. Bokningen och historiken finns kvar på ditt konto.",
     }
     flash(messages[action], "success")
+    if action in {"accept", "cancel"}:
+        notify_booking_status(booking_id, "accepted" if action == "accept" else "cancelled")
     return redirect(url_for("user_page.booking_detail", booking_id=booking_id))

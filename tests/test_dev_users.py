@@ -5,7 +5,7 @@ import sqlite3
 
 import psycopg
 import pytest
-from werkzeug.security import check_password_hash
+from argon2 import PasswordHasher
 
 import database
 
@@ -52,7 +52,7 @@ def test_development_accounts_have_distinct_roles_and_hashed_passwords(
     assert len(rows) == 2
     for row, role, password in zip(rows, ("admin", "user"), account_passwords):
         assert row[3] != password
-        assert check_password_hash(row[3], password)
+        assert PasswordHasher().verify(row[3], password)
         assert row[4] == "0000000000"
         assert row[5] == role
         assert database.authenticate_user(row[2], password, account_db_path) == (
@@ -129,13 +129,17 @@ def test_development_accounts_reject_same_email_before_writing(
     "password",
     ("Befintligt lösenord med åäö", "scrypt:äldre-lösenord", "pbkdf2:äldre-lösenord"),
 )
-def test_authentication_preserves_existing_plaintext_passwords(account_db_path, password):
+def test_authentication_upgrades_existing_plaintext_passwords(account_db_path, password):
     user = database.create_user(
         "Äldre användare", USER_EMAIL, password, "0123456789", "user", account_db_path
     )
+    with database._cursor(account_db_path) as cursor:
+        database._execute(cursor, "UPDATE users SET password = %s WHERE id = %s", (password, user[0]))
 
     assert database.authenticate_user(USER_EMAIL, password, account_db_path) == (
         *user[:3], USER_EMAIL, "user"
     )
     assert database.authenticate_user(USER_EMAIL, "fel lösenord", account_db_path) is None
-    assert _users(account_db_path)[0][3] == password
+    stored = _users(account_db_path)[0][3]
+    assert stored != password
+    assert PasswordHasher().verify(stored, password)

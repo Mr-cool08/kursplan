@@ -5,10 +5,11 @@ import re
 from runpy import run_path
 from threading import Thread
 from unittest.mock import ANY, call, patch
+from urllib.parse import urlsplit
 
 from playwright.sync_api import expect
 import pytest
-from werkzeug.serving import make_server
+from werkzeug.serving import WSGIRequestHandler, make_server
 
 import company_lookup
 import gen_func
@@ -18,6 +19,12 @@ ADMIN_EMAIL = "release-admin@example.com"
 ADMIN_PASSWORD = "release-admin-test-password"
 CUSTOMER_EMAIL = "release-customer@example.com"
 CUSTOMER_PASSWORD = "release-customer-test-password"
+
+
+class _QuietRequestHandler(WSGIRequestHandler):
+    def log_request(self, code="-", size="-"):
+        # Verification query strings contain single-use secrets.
+        pass
 
 
 @pytest.fixture
@@ -37,7 +44,7 @@ def app_url(monkeypatch, project_root):
     }):
         app_globals = run_path(str(project_root / "app.py"))
     with app_globals["dev_database_file"]:
-        with make_server("127.0.0.1", 0, app_globals["app"]) as server:
+        with make_server("127.0.0.1", 0, app_globals["app"], request_handler=_QuietRequestHandler) as server:
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -68,7 +75,15 @@ def _submit_request(page, course, start, end):
     expect(page).to_have_url(re.compile(r"/dashboard$"))
 
 
-def test_customer_and_admin_booking_lifecycle_in_browser(page, new_context, app_url):
+def test_customer_and_admin_booking_lifecycle_in_browser(page, new_context, app_url, monkeypatch):
+    verification_links = []
+
+    def capture_verification(email, link):
+        assert email == CUSTOMER_EMAIL
+        verification_links.append(link)
+        return "sent"
+
+    monkeypatch.setattr(gen_func, "send_verification_mail", capture_verification)
     health = page.request.get(f"{app_url}/health")
     assert health.ok
     assert health.json() == {"status": "ok"}
@@ -79,8 +94,14 @@ def test_customer_and_admin_booking_lifecycle_in_browser(page, new_context, app_
     page.get_by_label("Lösenord:").fill(CUSTOMER_PASSWORD)
     page.get_by_label("Organisationsnummer:").fill("0123456789")
     page.get_by_role("button", name="Skapa konto").click()
-    expect(page).to_have_url(f"{app_url}/dashboard")
-    page.get_by_role("link", name="Logga ut").click()
+    expect(page).to_have_url(f"{app_url}/login")
+    expect(page.locator(".verification-banner")).to_contain_text("Kontot är skapat")
+    expect(page.get_by_role("button", name="Skicka verifieringsmejlet igen", exact=True)).to_be_visible()
+    assert len(verification_links) == 1
+    verification = urlsplit(verification_links[0])
+    page.goto(f"{app_url}{verification.path}?{verification.query}")
+    page.get_by_role("button", name="Verifiera min e-postadress").click()
+    expect(page).to_have_url(f"{app_url}/login")
     _log_in(page, app_url, CUSTOMER_EMAIL, CUSTOMER_PASSWORD)
     expect(page).to_have_url(f"{app_url}/dashboard")
 
@@ -116,8 +137,9 @@ def test_customer_and_admin_booking_lifecycle_in_browser(page, new_context, app_
     expect(admin.get_by_text("Inväntar kundens svar", exact=True).first).to_be_visible()
 
     page.reload()
-    expect(customer_card.get_by_text("Inväntar kundens svar", exact=True)).to_be_visible()
+    expect(customer_card.get_by_text("Inväntar ditt svar", exact=True)).to_be_visible()
     customer_card.get_by_role("link", name="Besvara datumförslag").click()
+    expect(page.locator(".status-pill").first).to_have_text("Inväntar ditt svar")
     expect(page.get_by_text(end, exact=True).first).to_be_visible()
     page.get_by_role("button", name="Acceptera förslaget", exact=True).click()
     expect(page.locator(".status-pill").first).to_have_text("Accepterad")

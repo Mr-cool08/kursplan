@@ -4,9 +4,11 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/customer_dashboard.css') }}">
 {% endblock %}
 
 {% block content %}
+{% set status_labels = dict(status_labels, awaiting_response='Inväntar ditt svar') %}
 <main class="user-dashboard workflow-page customer-dashboard">
   <div class="dashboard-container">
     <header class="dashboard-header">
@@ -20,29 +22,59 @@
 
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {{ messages() }}
-    {% set waiting = bookings|selectattr('status', 'equalto', 'awaiting_response')|list if bookings else [] %}
-    {% if waiting %}
-    <div class="workflow-message attention" role="status">
-      <strong>{{ waiting|length }} datumförslag väntar på ditt svar.</strong>
-      Öppna bokningen för att acceptera, begära nytt datum eller avbryta.
+    {% if awaiting_response_count %}
+    <div class="workflow-message attention response-notice" role="status">
+      <div>
+        <strong>{{ awaiting_response_count }} datumförslag väntar på ditt svar.</strong>
+        <p>Öppna bokningen för att acceptera, begära nytt datum eller avbryta.</p>
+      </div>
+      <a href="{{ url_for('user_page.dashboard', status='awaiting_response') }}" class="dashboard-button secondary">Visa datumförslag <span aria-hidden="true">&rarr;</span></a>
     </div>
     {% endif %}
 
     <section class="dashboard-bookings" aria-labelledby="bookings-heading">
       <div class="bookings-heading">
         <h2 id="bookings-heading">Dina bokningar</h2>
-        {% if bookings %}<span class="booking-count">{{ bookings|length }} {% if bookings|length == 1 %}bokning{% else %}bokningar{% endif %}</span>{% endif %}
+        {% if selected_statuses %}
+        <span class="booking-count">Visar {{ bookings|length }} av {{ total_bookings }} {% if total_bookings == 1 %}bokning{% else %}bokningar{% endif %}</span>
+        {% elif bookings %}
+        <span class="booking-count">{{ bookings|length }} {% if bookings|length == 1 %}bokning{% else %}bokningar{% endif %}</span>
+        {% endif %}
       </div>
+      <div class="dashboard-layout{% if total_bookings %} has-filters{% endif %}">
+      {% if total_bookings %}
+      <form method="get" action="{{ url_for('user_page.dashboard') }}" class="booking-status-filter">
+        <fieldset aria-describedby="status-filter-help">
+          <legend>Filtrera på status</legend>
+          <p id="status-filter-help">Välj en eller flera statusar. Utan val visas alla bokningar.</p>
+          <div class="booking-status-options">
+            {% for status, label in status_labels.items() %}
+            <label class="booking-status-option" for="status-{{ status }}">
+              <input type="checkbox" id="status-{{ status }}" name="status" value="{{ status }}"{% if status in selected_statuses %} checked{% endif %}>
+              <span>{{ label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </fieldset>
+        <div class="workflow-actions">
+          <button type="submit" class="dashboard-button secondary">Filtrera</button>
+          {% if selected_statuses %}<a href="{{ url_for('user_page.dashboard') }}" class="dashboard-button secondary">Visa alla</a>{% endif %}
+        </div>
+      </form>
+      {% endif %}
+      <div class="booking-results">
       {% if bookings %}
       <div class="booking-grid">
         {% for b in bookings %}
         <article class="booking-card{% if b.status == 'awaiting_response' %} needs-response{% endif %}" aria-labelledby="booking-title-{{ b.id }}">
+          <div class="booking-card-summary">
           <div class="booking-card-topline">
             <span class="booking-reference">Bokning #{{ b.id }}</span>
             {{ status_pill(b.status, status_labels) }}
           </div>
           <h3 id="booking-title-{{ b.id }}">{{ b.utbildning }}</h3>
           {% if b.status == 'awaiting_response' %}<p class="response-prompt">Du har ett datumförslag att besvara.</p>{% endif %}
+          </div>
           <dl class="booking-details">
             <div class="booking-detail-wide">
               <dt>{{ 'Fastställt datum' if b.faststallt_datum else 'Önskat datum' }}</dt>
@@ -66,11 +98,18 @@
       </div>
       {% else %}
       <div class="empty-state">
+        {% if total_bookings %}
+        <h3>Inga bokningar matchar dina val.</h3>
+        <p>Välj andra statusar eller visa alla dina bokningar.</p>
+        {% else %}
         <h3>Du har inga bokningar ännu.</h3>
         <p>Skicka en förfrågan om en utbildning så visas den här.</p>
         <a href="{{ url_for('user_page.booking') }}" class="dashboard-button secondary">Hitta din utbildning</a>
+        {% endif %}
       </div>
       {% endif %}
+      </div>
+      </div>
     </section>
     <div class="dashboard-actions"><a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a></div>
   </div>

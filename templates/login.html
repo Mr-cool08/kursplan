@@ -24,7 +24,26 @@
         <h1 id="login-heading">Logga in</h1>
         <p>Ange dina uppgifter för att komma vidare.</p>
       </div>
-      <form class="auth-form" method="POST" action="{{ url_for('user_page.login') }}">
+      {% set messages = get_flashed_messages(with_categories=true) %}
+      {% if session.get('email_verification_pending') %}
+      <section class="verification-banner" id="email-verification-banner" aria-labelledby="verification-banner-heading" role="status">
+        <h2 id="verification-banner-heading">Verifiera din e-postadress</h2>
+        {% set delivery = namespace(shown=false) %}
+        {% for category, message in messages if category.startswith('verification_') %}
+        {% set delivery.shown = true %}
+        <p{% if category in ['verification_error', 'verification_warning'] %} class="verification-banner-error" role="alert"{% endif %}>{{ message }}</p>
+        {% endfor %}
+        {% if not delivery.shown %}
+        <p>Verifiera din e-postadress via länken i mejlet innan du loggar in. Länken gäller i 24 timmar.</p>
+        {% endif %}
+        <p>Behöver du en ny länk? Ange din e-postadress och ditt lösenord i fälten nedan och tryck på knappen.</p>
+        <button class="public-button" type="submit" form="login-form" formaction="{{ url_for('user_page.resend_verification') }}" formmethod="post">Skicka verifieringsmejlet igen</button>
+      </section>
+      {% endif %}
+      {% for category, message in messages if not category.startswith('verification_') %}
+      <p class="auth-message{% if category == 'error' %} auth-error{% endif %}" role="{% if category == 'error' %}alert{% else %}status{% endif %}">{{ message }}</p>
+      {% endfor %}
+      <form class="auth-form" id="login-form" method="POST" action="{{ url_for('user_page.login') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="next" value="{{ next_url or '' }}">
         {% if error %}
@@ -32,14 +51,17 @@
         {% endif %}
         <div class="auth-field">
           <label for="email">E-post:</label>
-          <input type="email" id="email" name="email" required>
+          <input type="email" id="email" name="email" autocomplete="email" maxlength="254" required>
         </div>
         <div class="auth-field">
           <label for="password">Lösenord:</label>
-          <input type="password" id="password" name="password" required>
+          <input type="password" id="password" name="password" autocomplete="current-password" maxlength="1024" required>
         </div>
         <input class="public-button primary" type="submit" value="Logga in">
       </form>
+      {% if not session.get('email_verification_pending') %}
+      <p class="auth-help">Nytt konto? Verifiera först din e-postadress via länken i mejlet. <a href="{{ url_for('user_page.resend_verification') }}">Skicka en ny verifieringslänk</a>.</p>
+      {% endif %}
     </section>
   </div>
 </main>

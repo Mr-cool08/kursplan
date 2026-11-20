@@ -12,7 +12,10 @@
   <div class="dashboard-container">
     <header class="dashboard-header">
       <div><p class="dashboard-kicker">Administration</p><h1>Bokningar</h1><p class="dashboard-intro">Följ förfrågningar, skicka datumförslag och avsluta genomförda utbildningar.</p></div>
-      <a href="{{ url_for('user_page.booking') }}" class="dashboard-button secondary">Ny förfrågan</a>
+      <div class="workflow-actions">
+        <a href="{{ url_for('admin_page.logs') }}" class="dashboard-button secondary">Händelselogg</a>
+        <a href="{{ url_for('user_page.booking') }}" class="dashboard-button secondary">Ny förfrågan</a>
+      </div>
     </header>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {{ messages() }}

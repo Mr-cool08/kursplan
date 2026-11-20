@@ -162,6 +162,67 @@
     line-height: 1.6;
 }
 
+.auth-page .auth-message {
+    margin: 0 0 20px;
+    padding: 14px 16px;
+    border: 1px solid #bcc9da;
+    border-radius: 8px;
+    background: #f0f5fb;
+    color: #344967;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.auth-page .auth-help {
+    margin: 20px 0;
+    color: #52617a;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.auth-page .auth-help a {
+    color: #2458b8;
+    text-underline-offset: 3px;
+}
+
+.auth-page .verification-banner {
+    display: grid;
+    gap: 12px;
+    margin: 0 0 24px;
+    padding: 20px;
+    border: 1px solid #bcc9da;
+    border-left: 4px solid #2458b8;
+    border-radius: 8px;
+    background: #f0f5fb;
+    color: #344967;
+    overflow-wrap: anywhere;
+}
+
+.auth-page .verification-banner h2 {
+    margin: 0;
+    color: #1b2b43;
+    font-size: 1.0625rem;
+    line-height: 1.4;
+}
+
+.auth-page .verification-banner p {
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+}
+
+.auth-page .verification-banner .verification-banner-error {
+    color: #863c35;
+}
+
+.auth-page .verification-banner .public-button {
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+    text-align: center;
+}
+
 @media (min-width: 860px) {
     .auth-page .auth-layout {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

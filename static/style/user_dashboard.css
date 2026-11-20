@@ -102,6 +102,61 @@ footer {
     gap: 20px;
 }
 
+.user-dashboard .booking-status-filter {
+    max-width: none;
+    margin: 0 0 20px;
+    padding: 20px;
+    border: 1px solid #98aac1;
+    border-radius: 12px;
+    background: #fefefe;
+    box-shadow: none;
+}
+
+.user-dashboard .booking-status-filter fieldset {
+    min-width: 0;
+    margin: 0 0 16px;
+    padding: 0;
+    border: 0;
+}
+
+.user-dashboard .booking-status-filter legend {
+    padding: 0;
+    color: #182b48;
+    font-weight: 700;
+}
+
+.user-dashboard .booking-status-filter p {
+    margin: 8px 0 12px;
+    color: #344967;
+    font-size: 0.875rem;
+}
+
+.user-dashboard .booking-status-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 4px 16px;
+}
+
+.user-dashboard .booking-status-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    margin: 0;
+    color: #182b48;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    cursor: pointer;
+}
+
+.user-dashboard .booking-status-option input {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: #2458b8;
+}
+
 .user-dashboard .booking-card {
     display: flex;
     flex-direction: column;

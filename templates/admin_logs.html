@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from '_booking_macros.html' import history_actor %}
+{% block title %}Händelselogg för bokningar{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
+{% endblock %}
+
+{% block content %}
+<main class="user-dashboard workflow-page booking-workflow">
+  <div class="dashboard-container">
+    <a class="back-link" href="{{ url_for('admin_page.dashboard') }}">&larr; Till bokningsöversikten</a>
+    <header class="dashboard-header">
+      <div><p class="dashboard-kicker">Administration</p><h1>Händelselogg</h1><p class="dashboard-intro">Se vem som har hanterat förfrågningar, skapat datumförslag och ändrat bokningar.</p></div>
+    </header>
+    <p class="workflow-muted">Senaste händelserna visas först, med högst 50 händelser per sida. Tider visas i svensk tid (CET/CEST), med automatisk sommar- och vintertid.</p>
+    {% if events %}
+    <ol class="booking-timeline" aria-label="Händelser för alla bokningar">
+      {% for event in events %}
+      <li>
+        <p><a href="{{ url_for('admin_page.booking_detail', booking_id=event.booking_id) }}"><strong>Bokning #{{ event.booking_id }}{% if event.utbildning %} · {{ event.utbildning }}{% endif %}</strong></a></p>
+        <p class="history-meta"><time datetime="{{ event.created_at }}">{{ event.created_at|swedish_time }}</time> · {{ history_actor(event) }}{% if event.is_private %} · Endast administratörer{% endif %}</p>
+        {% if event.to_status and event.to_status != event.from_status %}<p><strong>{% if event.from_status %}{{ status_labels.get(event.from_status, event.from_status) }} &rarr; {% endif %}{{ status_labels.get(event.to_status, event.to_status) }}</strong></p>{% endif %}
+        {% if event.note %}<p class="history-note">{{ event.note }}</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <div class="empty-state"><h2>Inga händelser att visa</h2><p>{{ 'Välj en tidigare sida för att se dokumenterade händelser.' if page > 1 else 'Bokningshändelser visas här när förfrågningar skapas och hanteras.' }}</p></div>
+    {% endif %}
+    <nav class="workflow-actions" aria-label="Bläddra i händelseloggen">
+      {% if page > 1 %}<a class="dashboard-button secondary" href="{{ url_for('admin_page.logs', page=page - 1) }}">Nyare händelser</a>{% endif %}
+      <p class="workflow-muted" aria-current="page">Sida {{ page }}</p>
+      {% if has_next %}<a class="dashboard-button secondary" href="{{ url_for('admin_page.logs', page=page + 1) }}">Äldre händelser</a>{% endif %}
+    </nav>
+  </div>
+</main>
+{% endblock %}

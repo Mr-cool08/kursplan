@@ -148,7 +148,12 @@ def test_request_registration_proposal_acceptance_and_completion(workflow, regis
     assert booking["faststallt_datum"] is None
     assert proposal["sent_at"] is None
     assert proposal["delivery_status"] == "disabled"
-    assert "Inväntar kundens svar" in customer.get("/dashboard").get_data(as_text=True)
+    for url in ("/dashboard", f"/bookings/{booking_id}"):
+        html = customer.get(url).get_data(as_text=True)
+        assert '<span class="status-pill awaiting_response">Inväntar ditt svar</span>' in html
+    for url in ("/admin/", f"/admin/bookings/{booking_id}"):
+        html = admin.get(url).get_data(as_text=True)
+        assert '<span class="status-pill awaiting_response">Inväntar kundens svar</span>' in html
     assert answer(customer, booking_id, proposal["id"], "accept").status_code == 302
     booking = database.get_booking_details_by_id(booking_id, path)
     assert booking["status"] == "accepted"
@@ -285,12 +290,14 @@ def test_signup_hashes_password_and_database_identity_overrides_forged_session_e
         "password": PASSWORD, "organization_number": "5566778899",
     })
     assert response.status_code == 302
-    assert database.authenticate_user("new@example.test", PASSWORD, path)
+    assert database.authenticate_user("new@example.test", PASSWORD, path) is None
     with database._cursor(path) as cursor:
         database._execute(cursor, "SELECT password FROM users WHERE email = %s", ("new@example.test",))
         stored = cursor.fetchone()[0]
-    from werkzeug.security import check_password_hash
-    assert stored != PASSWORD and check_password_hash(stored, PASSWORD)
+    from argon2 import PasswordHasher
+    assert stored != PASSWORD and PasswordHasher().verify(stored, PASSWORD)
+    with registration.session_transaction() as state:
+        assert "user_id" not in state
     booking_id = create_request(customer, path)
     with other.session_transaction() as state:
         state["user_email"] = CUSTOMER

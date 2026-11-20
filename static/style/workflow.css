@@ -364,6 +364,27 @@
     margin: 6px 0;
 }
 
+.workflow-page .booking-history {
+    display: grid;
+    gap: 12px;
+}
+
+.workflow-page .booking-history > li {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid #d7dfea;
+    border-radius: 8px;
+    background: #f7faff;
+}
+
+.workflow-page .booking-history > li > :first-child {
+    margin-top: 0;
+}
+
+.workflow-page .booking-history > li > :last-child {
+    margin-bottom: 0;
+}
+
 .workflow-page .history-heading {
     display: flex;
     justify-content: space-between;

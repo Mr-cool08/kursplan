@@ -20,3 +20,13 @@
   <div class="workflow-message {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>
   {% endfor %}
 {%- endmacro %}
+
+{% macro history_actor(event, show_account_id=true) -%}
+  {%- if event.actor == 'system' -%}
+    System
+  {%- else -%}
+    {{ {'admin': 'Administratör', 'customer': 'Kund'}.get(event.actor, 'Okänd aktör') }}
+    · {% if event.actor_name %}{{ event.actor_name }}{% elif event.actor_current_name %}{{ event.actor_current_name }} (namn från nuvarande konto){% else %}Namn inte dokumenterat{% endif %}
+    {% if show_account_id %}· {% if event.actor_id is defined and event.actor_id is not none %}Konto #{{ event.actor_id }}{% else %}Okänt konto{% endif %}{% endif %}
+  {%- endif -%}
+{%- endmacro %}

@@ -1,3 +1,4 @@
+from datetime import datetime
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -158,6 +159,19 @@ def _open_public_page(page, public_client, path):
 
     page.route("http://public.test/**", serve_local)
     page.goto(f"http://public.test{path}")
+
+
+@pytest.mark.parametrize(("visitor_timezone", "instant", "expected_year"), [
+    ("America/Los_Angeles", "2026-12-31T23:30:00+00:00", "2027"),
+    ("Asia/Tokyo", "2026-12-31T22:30:00+00:00", "2026"),
+])
+def test_footer_year_uses_swedish_time_at_new_year(
+    new_context, public_client, visitor_timezone, instant, expected_year,
+):
+    page = new_context(timezone_id=visitor_timezone).new_page()
+    page.clock.set_fixed_time(datetime.fromisoformat(instant))
+    _open_public_page(page, public_client, "/")
+    expect(page.locator("#currentYear")).to_have_text(expected_year)
 
 
 @pytest.mark.parametrize("path", ["/", "/login", "/signup"])

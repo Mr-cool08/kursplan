@@ -110,6 +110,7 @@ def send_proposal_mail(booking, proposal, booking_url):
              for label, action in choices]
     details = (
         ("Bokningsnummer", f"#{booking['id']}"),
+        ("Status", "Inväntar ditt svar"),
         ("Utbildning", booking["utbildning"]),
         ("Antal deltagare", str(booking["antal"])),
         ("Föreslaget datum", proposal["proposed_date"]),
@@ -156,4 +157,163 @@ def send_proposal_mail(booking, proposal, booking_url):
             logger.error("Datumförslag kunde inte skickas; feltyp=%s.", type(exc).__name__)
         return "sent" if accepted_by_server else "failed"
     logger.info("Datumförslag skickades via SMTP.")
+    return "sent"
+
+
+def send_booking_status_mail(booking, status, booking_url):
+    """Notify the booking's customer after an acceptance or cancellation."""
+    if status not in {"accepted", "cancelled"}:
+        logger.warning("Statusmejl skickades inte; bokningsstatus stöds inte.")
+        return "failed"
+    if os.environ.get("send_mail", "1").strip() == "0":
+        logger.info("Statusmejl skickades inte; e-post är avstängd.")
+        return "disabled"
+    sender = _environment_value("smtp_email")
+    server = _environment_value("smtp_server_address")
+    password = _environment_value("smtp_password")
+    try:
+        port = int(_environment_value("smtp_port") or "")
+    except ValueError:
+        logger.warning("Statusmejl skickades inte; SMTP-port saknas eller är ogiltig.")
+        return "failed"
+    if not sender or not server or not password or not 1 <= port <= 65535:
+        logger.warning("Statusmejl skickades inte; SMTP-inställningar saknas eller är ogiltiga.")
+        return "failed"
+    recipient = booking["email"]
+    if any(not isinstance(value, str) or not value.strip() or "\r" in value or "\n" in value
+           for value in (sender, recipient)):
+        logger.warning("Statusmejl skickades inte; ogiltig e-postadress.")
+        return "failed"
+
+    accepted = status == "accepted"
+    title = "Utbildningen är accepterad" if accepted else "Bokningen är avbruten"
+    introduction = (
+        "Du har accepterat datumförslaget. Din utbildning är nu bekräftad med uppgifterna nedan."
+        if accepted else
+        "Din bokning har avbrutits. Utbildningen kommer inte att genomföras inom denna bokning."
+    )
+    explanation = (
+        "Du kan se bokningens uppgifter och historik genom att logga in på Kursplan.se."
+        if accepted else
+        "Tidigare datumförslag kan inte längre accepteras. Bokningen och historiken finns kvar på ditt konto."
+    )
+    details = [
+        ("Bokningsnummer", f"#{booking['id']}"),
+        ("Status", "Accepterad" if accepted else "Avbruten"),
+        ("Utbildning", booking["utbildning"]),
+        ("Antal deltagare", booking["antal"]),
+    ]
+    if accepted:
+        details.extend((
+            ("Utbildningsdatum", booking.get("faststallt_datum") or "Inte angivet"),
+            ("Ort", booking.get("faststalld_ort") or "Inte angiven"),
+            ("Lokal", booking.get("faststalld_lokal") or "Inte angiven"),
+        ))
+    plain = f"{title}\n\n{introduction}\n\n"
+    plain += "\n".join(f"{label}: {value}" for label, value in details)
+    plain += f"\n\n{explanation}\n\nVisa bokningen:\n{booking_url}"
+    plain += "\n\nMed vänliga hälsningar,\nKursplan.se"
+    html = (
+        "<!doctype html><html lang='sv'><body>"
+        f"<h1>{escape(title)}</h1><p>{escape(introduction)}</p><dl>"
+    )
+    html += "".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in details)
+    html += (
+        f"</dl><p>{escape(explanation)}</p>"
+        f'<p><a href="{escape(booking_url, quote=True)}">Visa bokningen</a></p>'
+        "<p>Med vänliga hälsningar,<br>Kursplan.se</p></body></html>"
+    )
+    message = MIMEMultipart("alternative")
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = f"{title} – bokning #{booking['id']} – Kursplan.se"
+    message.attach(MIMEText(plain, "plain", "utf-8"))
+    message.attach(MIMEText(html, "html", "utf-8"))
+    accepted_by_server = False
+    try:
+        with SMTP(server, port, timeout=20) as smtp:
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.login(sender, password)
+            if smtp.sendmail(sender, recipient, message.as_string()):
+                logger.error("Statusmejl kunde inte levereras; SMTP-servern avvisade mottagaren.")
+                return "failed"
+            accepted_by_server = True
+    except (OSError, SMTPException) as exc:
+        # Error details can expose personal data. A failed QUIT after accepted
+        # DATA does not mean delivery failed and must not prompt a duplicate.
+        if accepted_by_server:
+            logger.warning("Statusmejl accepterades av SMTP-servern men anslutningen avslutades med fel; feltyp=%s.",
+                           type(exc).__name__)
+        else:
+            logger.error("Statusmejl kunde inte skickas; feltyp=%s.", type(exc).__name__)
+        return "sent" if accepted_by_server else "failed"
+    logger.info("Statusmejl skickades via SMTP.")
+    return "sent"
+
+
+def send_verification_mail(email, verification_url):
+    """Send a verification link without exposing it in application logs."""
+    if os.environ.get("send_mail", "1").strip() == "0":
+        logger.info("Verifieringsmejl skickades inte; e-post är avstängd.")
+        return "disabled"
+    sender = _environment_value("smtp_email")
+    server = _environment_value("smtp_server_address")
+    password = _environment_value("smtp_password")
+    try:
+        port = int(_environment_value("smtp_port") or "")
+    except ValueError:
+        logger.warning("Verifieringsmejl skickades inte; SMTP-port saknas eller är ogiltig.")
+        return "failed"
+    if not sender or not server or not password or not 1 <= port <= 65535:
+        logger.warning("Verifieringsmejl skickades inte; SMTP-inställningar saknas eller är ogiltiga.")
+        return "failed"
+    if not isinstance(email, str) or not email or any(
+        "\r" in value or "\n" in value for value in (sender, email)
+    ):
+        logger.warning("Verifieringsmejl skickades inte; ogiltig e-postadress.")
+        return "failed"
+
+    introduction = "Tack för att du har skapat ett konto på Kursplan.se."
+    explanation = (
+        "Verifiera din e-postadress via länken nedan. När adressen är verifierad kan du logga in. "
+        "Länken gäller i 24 timmar och kan bara användas en gång."
+    )
+    unsolicited = "Om du inte skapade kontot kan du ignorera det här mejlet."
+    plain = (
+        f"{introduction}\n\n{explanation}\n\nVerifiera e-postadress:\n{verification_url}"
+        f"\n\n{unsolicited}\n\nMed vänliga hälsningar,\nKursplan.se"
+    )
+    html = (
+        "<!doctype html><html lang='sv'><body><h1>Verifiera din e-postadress</h1>"
+        f"<p>{escape(introduction)}</p><p>{escape(explanation)}</p>"
+        f'<p><a href="{escape(verification_url, quote=True)}">Verifiera e-postadress</a></p>'
+        f"<p>{escape(unsolicited)}</p><p>Med vänliga hälsningar,<br>Kursplan.se</p></body></html>"
+    )
+    message = MIMEMultipart("alternative")
+    message["From"] = sender
+    message["To"] = email
+    message["Subject"] = "Verifiera din e-postadress – Kursplan.se"
+    message.attach(MIMEText(plain, "plain", "utf-8"))
+    message.attach(MIMEText(html, "html", "utf-8"))
+    accepted_by_server = False
+    try:
+        with SMTP(server, port, timeout=20) as smtp:
+            # Protocol traces would expose the one-time verification link.
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.login(sender, password)
+            if smtp.sendmail(sender, email, message.as_string()):
+                logger.error("Verifieringsmejl kunde inte levereras; SMTP-servern avvisade mottagaren.")
+                return "failed"
+            accepted_by_server = True
+    except (OSError, SMTPException) as exc:
+        # A failed QUIT cannot undo accepted DATA; do not send duplicate mail.
+        if accepted_by_server:
+            logger.warning(
+                "Verifieringsmejl accepterades av SMTP-servern men anslutningen avslutades med fel; feltyp=%s.",
+                type(exc).__name__,
+            )
+        else:
+            logger.error("Verifieringsmejl kunde inte skickas; feltyp=%s.", type(exc).__name__)
+        return "sent" if accepted_by_server else "failed"
+    logger.info("Verifieringsmejl skickades via SMTP.")
     return "sent"

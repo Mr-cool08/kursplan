@@ -22,7 +22,7 @@
       <div class="auth-panel-heading">
         <p class="public-kicker">Kom igång</p>
         <h1 id="signup-heading">Registrera konto</h1>
-        <p>Fyll i dina och företagets uppgifter.</p>
+        <p>Fyll i dina och företagets uppgifter. Vi skickar en länk till din e-postadress som du behöver verifiera innan du kan logga in.</p>
       </div>
       <form class="auth-form" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -31,15 +31,15 @@
         {% endif %}
         <div class="auth-field">
           <label for="name">Namn:</label>
-          <input type="text" id="name" name="name" required>
+          <input type="text" id="name" name="name" autocomplete="name" maxlength="200" required>
         </div>
         <div class="auth-field">
           <label for="email">E-post:</label>
-          <input type="email" id="email" name="email" required>
+          <input type="email" id="email" name="email" autocomplete="email" maxlength="254" required>
         </div>
         <div class="auth-field">
           <label for="password">Lösenord:</label>
-          <input type="password" id="password" name="password" required>
+          <input type="password" id="password" name="password" autocomplete="new-password" maxlength="1024" required>
         </div>
         <label class="checkbox-row">
           <input type="checkbox" onclick="showpassword()" name="show_password">
@@ -47,7 +47,7 @@
         </label>
         <div class="auth-field">
           <label for="organization_number">Organisationsnummer:</label>
-          <input type="text" id="organization_number" name="organization_number" required>
+          <input type="text" id="organization_number" name="organization_number" maxlength="50" required>
         </div>
         <input class="public-button primary" type="submit" value="Skapa konto">
       </form>
