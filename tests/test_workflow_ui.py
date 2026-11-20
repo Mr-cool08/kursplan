@@ -15,6 +15,7 @@ STATUS_LABELS = {
 }
 LONG_COURSE = "Anpassad säkerhetsutbildning " + "Utbildning" * 15
 LONG_VENUE = "Konferenslokalen, " + "Långadress" * 20
+LONG_COMPANY = "Svenska " + "Utbildningsföretaget" * 20 + " AB"
 
 
 @pytest.fixture
@@ -40,6 +41,10 @@ def workflow_ui_client(project_root):
     }
     for endpoint, path in paths.items():
         app.add_url_rule(path, endpoint=endpoint, view_func=lambda **kwargs: "")
+    app.add_url_rule(
+        "/admin/bookings/<int:booking_id>/company", endpoint="admin_page.company_name",
+        view_func=lambda booking_id: {"status": "found", "name": LONG_COMPANY},
+    )
 
     booking = {
         "id": 42, "name": "Anna " + "LångtEfternamn" * 10,
@@ -84,16 +89,36 @@ def workflow_ui_client(project_root):
         templates = {
             "customer": "booking_detail.html", "admin": "booking_detail.html",
             "overview": "admin_dashboard.html", "preview": "proposal_preview.html",
-            "dashboard": "dashboard.html",
+            "dashboard": "dashboard.html", "duplicates": "admin_dashboard.html",
+            "malformed-first": "admin_dashboard.html", "valid-first": "admin_dashboard.html",
         }
-        return render_template(templates[view], is_admin=view == "admin", **context)
+        values = dict(context)
+        if view == "duplicates":
+            values["bookings"] = [booking, {**booking, "id": 43, "organization_number": "556677-8899"}]
+        elif view in {"malformed-first", "valid-first"}:
+            values["bookings"] = [
+                {**booking, "organization_number": "5560747551"},
+                {**booking, "id": 43, "organization_number": "556074 7551"},
+                {**booking, "id": 44, "organization_number": "5560-74-7551"},
+            ]
+            if view == "malformed-first":
+                values["bookings"].reverse()
+        return render_template(templates[view], is_admin=view == "admin", **values)
 
     return app.test_client()
 
 
-def _open_view(page, client, view):
+def _open_view(page, client, view, *, company_result=None, company_status=200, company_calls=None):
     def serve_local(route):
-        response = client.get(urlsplit(route.request.url).path)
+        path = urlsplit(route.request.url).path
+        if path.endswith("/company"):
+            if company_calls is not None:
+                company_calls.append(path)
+            if company_result is not None:
+                result = company_result(path) if callable(company_result) else company_result
+                route.fulfill(status=company_status, json=result)
+                return
+        response = client.get(path)
         route.fulfill(
             status=response.status_code, body=response.get_data(),
             content_type=response.content_type,
@@ -113,11 +138,16 @@ def test_workflow_detail_and_preview_render_safe_actions(workflow_ui_client):
     assert "&lt;script&gt;" in customer
     assert "<script>alert('historik')</script>" not in customer
     assert "Ny administrativ anteckning" not in customer
+    assert "data-company-url" not in customer
+    assert "admin_companies.js" not in customer
     admin = workflow_ui_client.get("/render/admin").get_data(as_text=True)
     assert "/proposals/3/retry" in admin
     assert "E-postmeddelandet har inte skickats" in admin
     assert "Ny administrativ anteckning" in admin
     assert 'name="action" value="accept"' not in admin
+    assert 'data-company-url="/admin/bookings/42/company"' in admin
+    assert "admin_companies.js" in admin
+    assert "Företagsnamn ej hämtat" in admin
     preview = workflow_ui_client.get("/render/preview").get_data(as_text=True)
     assert 'name="confirmation_token" value="signed-preview"' in preview
     assert 'name="confirmed" value="1"' in preview
@@ -130,6 +160,8 @@ def test_workflow_views_fit_mobile_and_desktop(page, workflow_ui_client, width, 
     page.set_viewport_size({"width": width, "height": 844})
     _open_view(page, workflow_ui_client, view)
     expect(page.get_by_role("heading", level=1)).to_be_visible()
+    if view in {"admin", "overview"}:
+        expect(page.locator("[data-company-url]")).to_have_text(LONG_COMPANY)
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), (
         f"{view} overflows at {width}px: " + str(page.evaluate(
             "[...document.querySelectorAll('*')].filter(el => "
@@ -148,3 +180,66 @@ def test_workflow_views_fit_mobile_and_desktop(page, workflow_ui_client, width, 
         "document.querySelector('footer').getBoundingClientRect().top >= "
         "document.querySelector('main').getBoundingClientRect().bottom - 1"
     ), "Footer overlaps booking content"
+
+
+@pytest.mark.parametrize("view", ["admin", "overview"])
+def test_company_name_is_displayed_as_text(page, workflow_ui_client, view):
+    name = '<img src="invalid" onerror="window.companyInjected = true"> Företag & Söner AB'
+    _open_view(page, workflow_ui_client, view, company_result={"status": "found", "name": name})
+    company = page.locator("[data-company-url]")
+    expect(company).to_have_text(name)
+    expect(company).to_have_attribute("data-company-state", "found")
+    assert company.locator("img").count() == 0
+    assert page.evaluate("window.companyInjected === undefined")
+    assert "5566778899" in page.locator("main").inner_text()
+
+
+@pytest.mark.parametrize(("result", "http_status", "message"), [
+    ({"status": "not_found", "name": None}, 200, "Företagsnamn hittades inte"),
+    ({"status": "invalid", "name": None}, 200, "Organisationsnumret kan inte slås upp"),
+    ({"status": "unavailable", "name": None}, 200, "Företagsnamnet kunde inte hämtas just nu"),
+    ({"status": "found", "name": None}, 200, "Företagsnamnet kunde inte hämtas just nu"),
+    ({"error": "failed"}, 503, "Företagsnamnet kunde inte hämtas just nu"),
+])
+def test_company_lookup_failures_keep_booking_actions_available(
+    page, workflow_ui_client, result, http_status, message,
+):
+    _open_view(page, workflow_ui_client, "overview", company_result=result, company_status=http_status)
+    expect(page.locator("[data-company-url]")).to_have_text(message)
+    expect(page.get_by_role("link", name="Öppna bokning #42")).to_be_visible()
+    assert "5566778899" in page.locator("main").inner_text()
+
+
+def test_repeated_organization_is_looked_up_once(page, workflow_ui_client):
+    calls = []
+    _open_view(page, workflow_ui_client, "duplicates", company_calls=calls)
+    companies = page.locator("[data-company-url]")
+    expect(companies).to_have_count(2)
+    expect(companies).to_have_text([LONG_COMPANY, LONG_COMPANY])
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("view", ["malformed-first", "valid-first"])
+def test_malformed_numbers_do_not_share_a_valid_company_result(page, workflow_ui_client, view):
+    calls = []
+
+    def company_result(path):
+        if path == "/admin/bookings/42/company":
+            return {"status": "found", "name": "IKEA of Sweden AB"}
+        return {"status": "invalid", "name": None}
+
+    _open_view(page, workflow_ui_client, view, company_result=company_result, company_calls=calls)
+    expect(page.locator('[data-company-organization="5560747551"]')).to_have_text("IKEA of Sweden AB")
+    for malformed in ("556074 7551", "5560-74-7551"):
+        expect(page.locator(f'[data-company-organization="{malformed}"]')).to_have_text(
+            "Organisationsnumret kan inte slås upp",
+        )
+    assert sorted(calls) == [f"/admin/bookings/{booking_id}/company" for booking_id in (42, 43, 44)]
+
+
+def test_customer_detail_does_not_look_up_company(page, workflow_ui_client):
+    calls = []
+    _open_view(page, workflow_ui_client, "customer", company_calls=calls)
+    expect(page.get_by_role("heading", level=1)).to_be_visible()
+    assert page.locator("[data-company-url]").count() == 0
+    assert calls == []

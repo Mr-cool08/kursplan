@@ -10,6 +10,7 @@ from playwright.sync_api import expect
 import pytest
 from werkzeug.serving import make_server
 
+import company_lookup
 import gen_func
 
 
@@ -21,6 +22,7 @@ CUSTOMER_PASSWORD = "release-customer-test-password"
 
 @pytest.fixture
 def app_url(monkeypatch, project_root):
+    monkeypatch.setattr(company_lookup.service, "lookup", lambda _: company_lookup.LookupResult("not_found"))
     monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.setenv("db_path", "")

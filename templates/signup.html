@@ -1,35 +1,60 @@
 {% extends "base.html" %}
 {% block title %}Registrera{% endblock %}
 {% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/public.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style/auth.css') }}">
 {% endblock %}
 {% block content %}
-<h1>Registrera konto</h1>
-{% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
-<form method="post">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <label for="name">Namn:</label>
-  <input type="text" id="name" name="name" required><br><br>
-  <label for="email">E-post:</label>
-  <input type="email" id="email" name="email" required><br><br>
-  <label for="password">Lösenord:</label>
-  <input type="password" id="password" name="password" required><br><br>
-  <label class="checkbox-row">
-    <input type="checkbox" onclick="showpassword()" name="show_password">
-    <span>Visa lösenord</span>
-  </label>
-  <label for="organization_number">Organisationsnummer:</label>
-  <input type="text" id="organization_number" name="organization_number" required><br><br>
-
-  <input type="submit" value="Skapa konto">
-</form>
-
-
-
+<main class="public-page auth-page">
+  <div class="public-container auth-layout">
+    <section class="auth-intro" aria-labelledby="auth-intro-heading">
+      <a class="public-back" href="{{ url_for('user_page.index') }}"><span aria-hidden="true">&larr;</span> Till startsidan</a>
+      <p class="public-kicker">Välkommen till Kursplan</p>
+      <h2 id="auth-intro-heading">Ett konto.<br>Plats för mer kunskap.</h2>
+      <p class="public-intro">Ge företagets utbildningar en gemensam plats. Med ett konto kan du skicka förfrågningar och följa varje bokning.</p>
+      <ul class="auth-benefits">
+        <li><span aria-hidden="true">&check;</span> Beskriv företagets utbildningsbehov</li>
+        <li><span aria-hidden="true">&check;</span> Samla dina bokningar på ett ställe</li>
+        <li><span aria-hidden="true">&check;</span> Följ planeringen hela vägen</li>
+      </ul>
+    </section>
+    <section class="auth-panel" aria-labelledby="signup-heading">
+      <div class="auth-panel-heading">
+        <p class="public-kicker">Kom igång</p>
+        <h1 id="signup-heading">Registrera konto</h1>
+        <p>Fyll i dina och företagets uppgifter.</p>
+      </div>
+      <form class="auth-form" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if error %}
+        <p class="auth-error error" role="alert">{{ error }}</p>
+        {% endif %}
+        <div class="auth-field">
+          <label for="name">Namn:</label>
+          <input type="text" id="name" name="name" required>
+        </div>
+        <div class="auth-field">
+          <label for="email">E-post:</label>
+          <input type="email" id="email" name="email" required>
+        </div>
+        <div class="auth-field">
+          <label for="password">Lösenord:</label>
+          <input type="password" id="password" name="password" required>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" onclick="showpassword()" name="show_password">
+          <span>Visa lösenord</span>
+        </label>
+        <div class="auth-field">
+          <label for="organization_number">Organisationsnummer:</label>
+          <input type="text" id="organization_number" name="organization_number" required>
+        </div>
+        <input class="public-button primary" type="submit" value="Skapa konto">
+      </form>
+    </section>
+  </div>
+</main>
 <script>
-  
-  
-  
 function showpassword() {
   var x = document.getElementById("password");
   if (x.type === "password") {
@@ -38,10 +63,5 @@ function showpassword() {
     x.type = "password";
   }
 }
-
-
-
 </script>
-
-
 {% endblock %}

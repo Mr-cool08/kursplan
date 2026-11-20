@@ -4,6 +4,7 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
+<script src="{{ url_for('static', filename='js/admin_companies.js') }}" defer></script>
 {% endblock %}
 
 {% block content %}
@@ -30,7 +31,7 @@
         <tbody>
           {% for b in bookings %}
           <tr data-status="{{ b.status }}"{% if b.status in ['pending', 'new_date_requested'] %} class="needs-attention"{% endif %}>
-            <td data-label="Bokning / kund"><strong>#{{ b.id }} · {{ b.name }}</strong><span>{{ b.organization_number }}</span><a href="mailto:{{ b.email }}">{{ b.email }}</a></td>
+            <td data-label="Bokning / kund"><strong>#{{ b.id }} · {{ b.name }}</strong><span class="workflow-muted" data-company-url="{{ url_for('admin_page.company_name', booking_id=b.id) }}" data-company-organization="{{ b.organization_number }}" data-company-state="idle">Företagsnamn ej hämtat</span><span>{{ b.organization_number }}</span><a href="mailto:{{ b.email }}">{{ b.email }}</a></td>
             <td data-label="Utbildning"><strong>{{ b.utbildning }}</strong><span>{{ b.antal }} deltagare</span></td>
             <td data-label="Datum"><span class="workflow-muted">Önskat: {{ requested_date(b) }}</span><span>Fastställt: {{ b.faststallt_datum or 'Inte fastställt' }}</span></td>
             <td data-label="Ort / lokal"><span>{{ b.faststalld_ort or b.onskad_ort or b.ort or 'Ort inte angiven' }}</span><span>{{ b.faststalld_lokal or b.lokaladress or b.lokal or 'Lokal inte angiven' }}</span></td>

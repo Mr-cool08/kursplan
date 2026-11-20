@@ -1,59 +1,139 @@
-.home-hero-container {
-    position: relative;
-}
-
-.home-container {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    max-width: 500px;
-    width: 90%;
-    text-align: center;
-    background: rgba(255, 255, 255, 0.8);
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-}
-
-.home-options {
-    list-style: none;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
+.home-page .home-hero {
+    display: grid;
     align-items: center;
-    gap: 10px;
+    gap: 36px;
 }
 
-.home-options a {
+.home-page .home-intro {
+    min-width: 0;
+}
+
+.home-page h1 {
+    margin: 0;
+    font-size: clamp(2.25rem, 5.2vw, 3.75rem);
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -0.045em;
+}
+
+.home-page .home-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 30px;
+}
+
+.home-page .home-visual {
+    position: relative;
+    min-width: 0;
+    height: clamp(260px, 38vw, 440px);
+    overflow: hidden;
+    border: 1px solid #cbdce7;
+    border-radius: 16px;
+    background: #dbeaf1;
+}
+
+.home-page .home-visual img {
     display: block;
-    padding: 10px 20px;
-    background-color: #333;
-    color: #fff;
-    text-decoration: none;
-    border-radius: 4px;
-    width: 200px;
-}
-
-.home-options a:hover {
-    background-color: #555;
-}
-
-.home-hero {
     width: 100%;
-    height: auto;
+    height: 100%;
     object-fit: cover;
-    border-radius: 8px;
-    display: block;
+    object-position: 14% center;
 }
 
-@media (max-width: 600px) {
-    .home-container {
-        width: 90%;
-        padding: 15px;
-    }
+.home-page .home-visual-caption {
+    position: absolute;
+    right: 20px;
+    bottom: 20px;
+    left: 20px;
+    padding: 18px 20px;
+    border: 1px solid #d7e3ec;
+    border-radius: 8px;
+    background: #f6fafc;
+}
 
-    .home-options a {
+.home-page .home-visual-caption .public-kicker {
+    margin-bottom: 5px;
+    font-size: 0.625rem;
+}
+
+.home-page .home-visual-caption p {
+    margin: 0;
+    color: #182b48;
+    font-size: 1.125rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.home-page .home-process {
+    margin-top: clamp(40px, 6vw, 64px);
+    padding-top: 28px;
+    border-top: 1px solid #d7dfea;
+}
+
+.home-page .home-process-heading .public-kicker {
+    margin-bottom: 8px;
+}
+
+.home-page h2 {
+    margin: 0;
+    font-size: clamp(1.25rem, 2.2vw, 1.5rem);
+    line-height: 1.4;
+    letter-spacing: -0.02em;
+}
+
+.home-page .home-steps {
+    display: grid;
+    gap: 24px;
+    margin: 28px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.home-page .home-steps li {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    min-width: 0;
+}
+
+.home-page .home-step-number {
+    padding-top: 3px;
+    color: #315db5;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.home-page h3 {
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+}
+
+.home-page .home-steps p {
+    margin: 6px 0 0;
+    color: #52617a;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+@media (min-width: 640px) {
+    .home-page .home-steps {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 28px;
+    }
+}
+
+@media (min-width: 900px) {
+    .home-page .home-hero {
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+        gap: 48px;
+    }
+}
+
+@media (max-width: 359px) {
+    .home-page .home-actions .public-button {
         width: 100%;
     }
 }

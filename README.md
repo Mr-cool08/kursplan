@@ -2,9 +2,9 @@
 
 ## Kör appen i utvecklingsläge
 
-Sätt `DEV_MODE=true` i `.env` och starta appen med `python app.py`. Det aktiverar debugloggar och försöker först använda den beständiga PostgreSQL-databasen i `db_path`, med fem sekunders anslutningstimeout. Då finns konton och bokningar kvar mellan omstarter, och ändringar sparas i den konfigurerade databasen.
+Sätt `DEV_MODE=true` i `.env` och starta appen med `python app.py`. Appen försöker först använda den beständiga PostgreSQL-databasen i `db_path`, med fem sekunders anslutningstimeout. Då finns konton och bokningar kvar mellan omstarter, och ändringar sparas i den konfigurerade databasen. Debugloggning styrs separat av `DEBUG` enligt avsnittet om loggning nedan.
 
-Om `db_path` saknas, är ogiltig eller databasen inte går att ansluta till faller appen tillbaka till en tom SQLite-fil direkt i projektets rot, bredvid `app.py`. Filen heter `kursplan-dev-<slumpmässigt namn>.db` och får ett unikt namn vid varje start. Startloggen visar en varning och filens sökväg. Filen tas bort när appen avslutas normalt, så reservdatabasen börjar tom vid varje start. Fel i exempelvis databasens schema avbryter fortfarande starten och döljs inte av reservlösningen.
+Om `db_path` saknas, är ogiltig eller databasen inte går att ansluta till faller appen tillbaka till en tom SQLite-fil direkt i projektets rot, bredvid `app.py`. Filen heter `kursplan-dev-<slumpmässigt namn>.db` och får ett unikt namn vid varje start. Startloggen visar en varning; med `DEBUG=true` visas även filens sökväg. Filen tas bort när appen avslutas normalt, så reservdatabasen börjar tom vid varje start. Fel i exempelvis databasens schema avbryter fortfarande starten och döljs inte av reservlösningen.
 
 ### Inloggning i utvecklingsläget
 
@@ -17,7 +17,7 @@ I utvecklingsläget skapas automatiskt två konton. Båda loggar in via `/login`
 
 Det finns inget gemensamt standardlösenord. Om ett lösenord varken har angetts i miljön eller sparats tidigare genereras ett separat slumpmässigt lösenord för kontot. Inställningar i miljön, exempelvis från `.env`, har företräde framför sparade uppgifter och förvalda adresser.
 
-Inloggningsuppgifterna sparas i `.dev-accounts.json` bredvid `app.py`. Filen ignoreras av Git och återanvänds mellan omstarter, även när SQLite-databasen skapas om. Startloggen visar filens sökväg utan att skriva ut lösenorden. Dela eller versionshantera inte filen. Nya utvecklingskontons lösenord lagras hashade i databasen.
+Inloggningsuppgifterna sparas i `.dev-accounts.json` bredvid `app.py`. Filen ignoreras av Git och återanvänds mellan omstarter, även när SQLite-databasen skapas om. Med `DEBUG=true` visar startloggen filens sökväg utan att skriva ut lösenorden. Dela eller versionshantera inte filen. Nya utvecklingskontons lösenord lagras hashade i databasen.
 
 För att se de aktuella lokala inloggningsuppgifterna, öppna filen och läs `email` och `password` under `admin` respektive `user`. I PowerShell, från projektets rot:
 
@@ -37,9 +37,131 @@ docker compose exec web cat /app/.dev-accounts.json
 
 Den vanliga utvecklingsanvändaren får också fyra exempelbokningar: två väntande förfrågningar, en accepterad och en avbokad. Exemplen visar exakt datum, datumintervall, egen utbildning, frivillig ort och olika lokalval. De syns både i kundens dashboard och administratörsöversikten; där visas accepterade och avbokade poster via filtren. Inga mejl skickas när exemplen skapas.
 
+Exemplen använder riktiga organisationsnummer så att företagsnamnen kan hämtas
+med adminsidans gratis API:
+
+| Exempelutbildning | Företag | Organisationsnummer |
+| --- | --- | --- |
+| HLR | IKEA of Sweden AB | 556074-7551 |
+| Anpassad säkerhetsutbildning | Aktiebolaget Volvo | 556012-5790 |
+| Heta arbeten | Telefonaktiebolaget LM Ericsson | 556016-0680 |
+| Första hjälpen | H & M Hennes & Mauritz AB | 556042-7220 |
+
+Bokningarna, kontaktpersonerna och lokaluppgifterna är fortfarande fiktiva.
+Alla exempel tillhör utvecklingsanvändaren och använder dennes e-postadress;
+inga verkliga kontaktuppgifter för bolagen läggs till. Utvecklingskontots
+organisationsnummer ändras inte. Uppstarten behöver inte kontakta API:et;
+företagsnamnen hämtas när administratören öppnar sidan.
+
 Exemplen skapas en gång per utvecklingsanvändare och databas. En separat tabell, `dev_booking_seeds`, skapas automatiskt i utvecklingsläget och håller reda på detta. Omstarter ändrar inte befintliga bokningar och återställer inte exempel som du har redigerat, avbokat eller tagit bort. En ny tillfällig SQLite-databas får nya exempel. Med `DEV_MODE=false` skapas varken exempelbokningar eller markörtabellen.
 
+De riktiga organisationsnumren används för nya exempel. Tidigare skapade
+exempel i en beständig databas skrivs inte om automatiskt, eftersom de kan ha
+redigerats. En ny temporär utvecklingsdatabas får de uppdaterade exemplen.
+
 Med `DEV_MODE=false` eller utan inställningen använder appen PostgreSQL via `db_path` och skapar inga utvecklingskonton. Den befintliga administratörsinställningen `test_email`/`test_password` används som tidigare.
+
+## Företagsnamn i administrationen
+
+Adminöversikten och administratörens bokningsdetaljer hämtar automatiskt
+företagsnamnet från bokningens organisationsnummer. Uppslaget använder
+[mackan.eu:s gratis JSON-API](https://mackan.eu/tools/bolagsverket/index.php),
+en tredjepartstjänst som enligt leverantören hämtar data från Bolagsverket.
+Ingen registrering, API-nyckel eller betald prenumeration krävs. Leverantören
+anger rimlig användning utan en fast anropskvot; tillgänglighet och täckning
+beror på tjänsten och dess datakälla.
+
+Anropen görs från servern till
+`https://mackan.eu/tools/bolagsverket/get_data.php?orgnr=<organisationsnummer>`.
+Endast organisationsnumret skickas till tjänsten. Webbläsaren använder en
+administratörsskyddad route och laddar namnet separat, så bokningssidan kan
+användas även om uppslaget misslyckas. Det befintliga organisationsnumret
+visas alltid. Numret kontrolleras före uppslagning; personnummer, inklusive
+enskilda firmors personnummer, skickas inte till API:et.
+
+Träffar mellanlagras i webbprocessens minne i 24 timmar och saknade företag i
+en timme, med högst 256 nummer i cachen. Samtidiga uppslag serialiseras och
+API-fel pausar nya anrop i en minut. API-anrop har tre sekunders nätverkstimeout.
+Vid saknat företag, ogiltigt nummer eller anslutningsfel visas en förklarande
+text. Företagsnamnet sparas inte i databasen och ändrar inga bokningsuppgifter.
+
+Ingen databasmigrering eller ny miljövariabel behövs. Webbservern behöver
+utgående HTTPS till `mackan.eu`. Tester använder mockade API-svar och skickar
+inga kunduppgifter till den externa tjänsten.
+
+## Loggning och loggar mellan omstarter
+
+Appen skriver loggar både till konsolen och till `logs/kursplan.log` i projektets
+rot. Loggfilen öppnas för tillägg vid nästa start, så tidigare händelser finns
+kvar. Loggningen omfattar uppstart, HTTP-anrop, autentisering och nekad åtkomst,
+bokningshändelser, databasoperationer, e-post och fel.
+
+Varje rad har UTC-tid, nivå, logger, process-id och ett request-id när händelsen
+hör till ett HTTP-anrop. Anropsloggen visar metod, route-mall, statuskod och
+svarstid. Samma id returneras i `X-Request-ID`, så att ett fel i webbläsaren kan
+kopplas till loggraden utan att spara kundens indata. Även `/health` loggas.
+
+| Nivå | Användning |
+| --- | --- |
+| `DEBUG` | Detaljer för felsökning, exempelvis databasläsningar. Visas endast med `DEBUG=true`. |
+| `INFO` | Vanliga händelser, exempelvis genomförda anrop och sparade bokningar. |
+| `WARNING` | Avvisade formulär, nekad åtkomst och andra förväntade problem. |
+| `ERROR` | Misslyckade operationer och oväntade fel under körning. |
+| `CRITICAL` | Allvarliga fel som hindrar appen från att starta eller fortsätta. |
+
+Inställningar i `.env`:
+
+```dotenv
+DEBUG=false
+LOG_DIR=logs
+LOG_MAX_BYTES=10485760
+LOG_BACKUP_COUNT=5
+```
+
+Sätt `DEBUG=true` och starta om appen när mer detaljer behövs. `DEBUG` påverkar
+loggningen oberoende av `DEV_MODE` och aktiverar inte Flasks interaktiva
+felsökare. Övriga nivåer är aktiva även när `DEBUG=false`.
+
+`LOG_DIR` kan vara en sökväg relativ projektroten eller en absolut sökväg.
+Mappen skapas automatiskt och måste vara skrivbar för appens användare.
+Standardgränsen `LOG_MAX_BYTES=10485760` är 10 MiB per fil. När gränsen nås
+roteras filen till `kursplan.log.1`, därefter `.2` och så vidare. Med
+`LOG_BACKUP_COUNT=5` sparas fem tidigare filer utöver den aktiva filen, omkring
+60 MiB totalt. Äldre loggar raderas vid rotation; spara dem separat om en längre
+historik behövs. Inställningarna ska vara positiva heltal.
+
+Lokalt kan du följa den aktiva filen i PowerShell:
+
+```powershell
+Get-Content .\logs\kursplan.log -Tail 100 -Wait
+```
+
+Docker Compose monterar den beständiga volymen `app_logs` på `/app/logs` och
+sätter alltid `LOG_DIR=/app/logs`, även om `.env` anger en annan lokal sökväg.
+Loggfilerna finns därmed kvar vid omstart och när webbcontainern ersätts, så
+länge samma Compose-projekt och dess volym används. Att ta bort volymen tar
+också bort logghistoriken. Vid införandet av den här konfigurationsändringen
+behöver webbcontainern återskapas genom den ordinarie granskade driftsättningen
+så att volymen monteras. Ingen databasmigrering krävs för loggningen.
+
+Följ konsolloggen eller läs de beständiga filerna:
+
+```console
+docker compose logs --tail=100 --follow web
+docker compose exec web ls -lh /app/logs
+docker compose exec web tail -n 100 /app/logs/kursplan.log
+```
+
+Konsolloggen hanteras separat av Docker; de beständiga appfilerna ligger i
+`app_logs`. Loggarna innehåller händelser och teknisk diagnostik utan lösenord,
+sessionsnycklar, SMTP-uppgifter, e-postinnehåll eller formulärinnehåll.
+Fel loggas med undantagstyp, fil, funktion och radnummer. Rå exceptiontext,
+källkod och lokala variabelvärden utelämnas eftersom de kan innehålla kunddata.
+Processfel och ohanterade trådfel loggas som `CRITICAL`; normala avslut och
+Docker-containerns stoppsignal loggas som `INFO`. Ett tvångsavslut eller
+strömavbrott kan inte ge någon avslutningsrad.
+Förvara även loggfilerna med begränsad åtkomst. Den lokala standardmappen och
+roterade loggfiler ignoreras av Git och Dockerbygget.
 
 ## Databasuppgradering för bokningsönskemål
 

@@ -77,6 +77,22 @@ def project_root():
     return PROJECT_ROOT
 
 
+@pytest.fixture(params=("sqlite", "postgresql"))
+def all_db_path(request, tmp_path):
+    """Run the same behavior against development and production database engines."""
+    if request.param == "postgresql":
+        return request.getfixturevalue("db_path")
+    path = tmp_path / "scenarios.db"
+    database.create_database(path)
+    return path
+
+
+@pytest.fixture
+def scenario_app(all_db_path, monkeypatch):
+    monkeypatch.setenv("send_mail", "0")
+    return _make_test_app(all_db_path)
+
+
 @pytest.fixture
 def csrf_from_html():
     def extract(html):
@@ -88,9 +104,7 @@ def csrf_from_html():
     return extract
 
 
-@pytest.fixture
-def app(db_path, monkeypatch):
-    monkeypatch.setenv("send_mail", "0")
+def _make_test_app(db_path):
     test_app = Flask(
         "kursplan-tests",
         template_folder=str(PROJECT_ROOT / "templates"),
@@ -110,6 +124,12 @@ def app(db_path, monkeypatch):
         return redirect(url_for("user_page.index"))
 
     return test_app
+
+
+@pytest.fixture
+def app(db_path, monkeypatch):
+    monkeypatch.setenv("send_mail", "0")
+    return _make_test_app(db_path)
 
 
 @pytest.fixture

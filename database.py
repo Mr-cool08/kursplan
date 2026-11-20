@@ -1,11 +1,21 @@
 from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import logging
 import secrets
 import sqlite3
 
 import psycopg
 from werkzeug.security import check_password_hash, generate_password_hash
+
+
+logger = logging.getLogger(__name__)
+_WRITE_OPERATIONS = frozenset({
+    "create_booking", "create_booking_request", "create_user", "remove_booking",
+    "ensure_test_user", "ensure_dev_users", "ensure_dev_bookings", "create_proposal",
+    "respond_to_proposal", "transition_booking", "add_booking_note",
+    "claim_proposal_delivery", "finish_proposal_delivery", "create_database",
+})
 
 
 BOOKING_STATUSES = {
@@ -70,26 +80,44 @@ _BOOKING_MIGRATION_COLUMNS = _BOOKING_DETAIL_COLUMNS[10:]
 
 
 @contextmanager
-def _cursor(db_path):
+def _cursor(db_path, operation="unspecified"):
     # A Path selects the local SQLite file. Production passes a PostgreSQL DSN.
-    if isinstance(db_path, Path):
-        with (
-            closing(sqlite3.connect(db_path, autocommit=True, timeout=15)) as conn,
-        ):
-            # Foreign keys must be enabled before opening the transaction.
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.autocommit = False
-            with conn, closing(conn.cursor()) as cursor:
+    backend = "sqlite" if isinstance(db_path, Path) else "postgresql"
+    logger.debug("Databastransaktion startar; operation=%s backend=%s.", operation, backend)
+    try:
+        if isinstance(db_path, Path):
+            with (
+                closing(sqlite3.connect(db_path, autocommit=True, timeout=15)) as conn,
+            ):
+                # Foreign keys must be enabled before opening the transaction.
+                conn.execute("PRAGMA foreign_keys = ON")
+                conn.autocommit = False
+                with conn, closing(conn.cursor()) as cursor:
+                    yield cursor
+        else:
+            with psycopg.connect(db_path) as conn, conn.cursor() as cursor:
                 yield cursor
+    except Exception as exc:
+        # Database errors may include credentials, SQL values and personal data.
+        logger.error("Databastransaktion misslyckades; operation=%s backend=%s feltyp=%s.",
+                     operation, backend, type(exc).__name__)
+        raise
     else:
-        with psycopg.connect(db_path) as conn, conn.cursor() as cursor:
-            yield cursor
+        log = logger.info if operation in _WRITE_OPERATIONS else logger.debug
+        log("Databastransaktion slutförd; operation=%s backend=%s.", operation, backend)
 
 
 def _execute(cursor, query, params=()):
     if isinstance(cursor, sqlite3.Cursor):
         query = query.replace("%s", "?")
-    return cursor.execute(query, params)
+    # Log only the statement category, never SQL text or its bound values.
+    statement = query.lstrip().split(None, 1)[0].upper()
+    if statement not in {"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER"}:
+        statement = "OTHER"
+    logger.debug("Databasfråga startar; typ=%s.", statement)
+    result = cursor.execute(query, params)
+    logger.debug("Databasfråga slutförd; typ=%s antal_rader=%s.", statement, cursor.rowcount)
+    return result
 
 
 def generate_secret_key():
@@ -122,7 +150,7 @@ def create_booking(
     name, email, organization_number, utbildning, antal, ort, lokal, datum, db_path
 ):
     """Create a legacy exact-date request while preserving its original wishes."""
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "create_booking") as cursor:
         return _insert_booking(
             cursor,
             (
@@ -180,9 +208,11 @@ def create_booking_request(
         legacy_datum = f"{onskat_startdatum} – {onskat_slutdatum}"
         onskat_datum = None
     else:
+        logger.warning("Bokningsförfrågan avvisades; orsak=ogiltig_datumtyp.")
         raise ValueError("Okänd datumtyp")
 
     if utbildningskalla not in {"katalog", "fritext"}:
+        logger.warning("Bokningsförfrågan avvisades; orsak=ogiltig_utbildningskälla.")
         raise ValueError("Okänd utbildningskälla")
 
     if lokalansvar == "kund":
@@ -191,6 +221,7 @@ def create_booking_request(
         legacy_lokal = "Säkerhetsutbildarna ordnar lokalen"
         lokaladress = None
     else:
+        logger.warning("Bokningsförfrågan avvisades; orsak=ogiltigt_lokalansvar.")
         raise ValueError("Okänt lokalansvar")
 
     normalized_ort = (
@@ -199,7 +230,7 @@ def create_booking_request(
         else None
     )
 
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "create_booking_request") as cursor:
         return _insert_booking(
             cursor,
             (
@@ -242,13 +273,13 @@ def create_booking_request(
 
 
 def check_user_exists(email, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "check_user_exists") as cursor:
         _execute(cursor, "SELECT id FROM users WHERE email = %s", (email,))
         return cursor.fetchone() is not None
 
 
 def create_user(name, email, password, organization_number, role, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "create_user") as cursor:
         _execute(
             cursor,
             "INSERT INTO users (name, email, password, organization_number, role) "
@@ -277,7 +308,7 @@ def cancel_booking_for_email(booking_id, email, db_path):
 
 
 def get_email_by_booking_id(booking_id, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_email_by_booking_id") as cursor:
         _execute(cursor, "SELECT email FROM bookings WHERE id = %s", (booking_id,))
         row = cursor.fetchone()
         return row[0] if row else None
@@ -286,24 +317,26 @@ def get_email_by_booking_id(booking_id, db_path):
 def book_bookings(booking_ids, booking_date, ort, db_path):
     """Retired: only the customer's response may confirm a booking."""
     if not booking_ids:
+        logger.debug("Äldre bokningsfunktion anropades utan valda bokningar.")
         return []
+    logger.warning("Direkt bekräftelse via den äldre bokningsfunktionen avvisades.")
     raise ValueError("Skicka ett datumförslag som kunden får godkänna.")
 
 
 def remove_booking(booking_id, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "remove_booking") as cursor:
         _execute(cursor, "DELETE FROM bookings WHERE id = %s", (booking_id,))
 
 
 def get_utbildning_by_booking_id(booking_id, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_utbildning_by_booking_id") as cursor:
         _execute(cursor, "SELECT utbildning FROM bookings WHERE id = %s", (booking_id,))
         row = cursor.fetchone()
         return row[0] if row else None
 
 
 def get_booking_by_id(booking_id, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_booking_by_id") as cursor:
         _execute(
             cursor,
             f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE id = %s",
@@ -314,7 +347,7 @@ def get_booking_by_id(booking_id, db_path):
 
 def get_booking_details_by_id(booking_id, db_path):
     """Return raw legacy, original-request and confirmed booking fields by name."""
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_booking_details_by_id") as cursor:
         _execute(
             cursor,
             f"SELECT {', '.join(_BOOKING_DETAIL_COLUMNS)} "
@@ -326,7 +359,7 @@ def get_booking_details_by_id(booking_id, db_path):
 
 
 def get_bookings_by_email(email, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_bookings_by_email") as cursor:
         _execute(
             cursor,
             f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE email = %s",
@@ -337,7 +370,7 @@ def get_bookings_by_email(email, db_path):
 
 
 def get_bookings_by_status(status, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_bookings_by_status") as cursor:
         _execute(
             cursor,
             f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE status = %s",
@@ -348,7 +381,7 @@ def get_bookings_by_status(status, db_path):
 
 
 def ensure_test_user(email, password, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "ensure_test_user") as cursor:
         _execute(
             cursor,
             "INSERT INTO users (name, email, password, organization_number, role) "
@@ -362,13 +395,14 @@ def ensure_dev_users(admin_email, admin_password, user_email, user_password, db_
     admin_email = admin_email.strip()
     user_email = user_email.strip()
     if admin_email.casefold() == user_email.casefold():
+        logger.warning("Utvecklingskonton avvisades; orsak=samma_e-postadress.")
         raise ValueError("Utvecklingskontona måste ha olika e-postadresser.")
 
     accounts = (
         ("Utvecklingsadministratör", admin_email, admin_password, "admin"),
         ("Utvecklingsanvändare", user_email, user_password, "user"),
     )
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "ensure_dev_users") as cursor:
         for name, email, password, role in accounts:
             _execute(
                 cursor,
@@ -379,16 +413,17 @@ def ensure_dev_users(admin_email, admin_password, user_email, user_password, db_
 
 
 def ensure_dev_bookings(user_email, db_path):
-    """Create sample bookings once per development customer without sending mail."""
-    with _cursor(db_path) as cursor:
+    """Create fictional bookings for real companies once per development customer."""
+    with _cursor(db_path, "ensure_dev_bookings") as cursor:
         _execute(
             cursor,
-            "SELECT id, name, organization_number FROM users "
+            "SELECT id, name FROM users "
             "WHERE email = %s AND role = 'user'",
             (user_email,),
         )
         user = cursor.fetchone()
         if user is None:
+            logger.debug("Exempelbokningar hoppades över; utvecklingskund saknas.")
             return []
 
         # This table is only created in development mode. The marker and all
@@ -405,6 +440,7 @@ def ensure_dev_bookings(user_email, db_path):
             (user[0],),
         )
         if cursor.fetchone() is None:
+            logger.debug("Exempelbokningar finns redan; inga nya skapades.")
             return []
 
         today = date.today()
@@ -414,18 +450,21 @@ def ensure_dev_bookings(user_email, db_path):
 
         samples = (
             {
+                "organization_number": "5560747551",  # IKEA of Sweden AB
                 "utbildning": "HLR", "utbildningskalla": "katalog", "antal": 8,
                 "datumtyp": "exakt", "onskat_datum": future_date(30),
                 "onskad_ort": "Stockholm", "lokalansvar": "kund",
                 "lokaladress": "Exempelgatan 1, Stockholm", "status": "pending",
             },
             {
+                "organization_number": "5560125790",  # Aktiebolaget Volvo
                 "utbildning": "Exempel: Anpassad säkerhetsutbildning",
                 "utbildningskalla": "fritext", "antal": 12,
                 "datumtyp": "intervall", "onskat_startdatum": future_date(45),
                 "onskat_slutdatum": future_date(49), "status": "pending",
             },
             {
+                "organization_number": "5560160680",  # Telefonaktiebolaget LM Ericsson
                 "utbildning": "Heta arbeten", "utbildningskalla": "katalog", "antal": 6,
                 "datumtyp": "intervall", "onskat_startdatum": future_date(14),
                 "onskat_slutdatum": future_date(18), "onskad_ort": "Göteborg",
@@ -433,6 +472,7 @@ def ensure_dev_bookings(user_email, db_path):
                 "status": "accepted",
             },
             {
+                "organization_number": "5560427220",  # H & M Hennes & Mauritz AB
                 "utbildning": "Första hjälpen", "utbildningskalla": "katalog", "antal": 10,
                 "datumtyp": "exakt", "onskat_datum": future_date(60),
                 "onskad_ort": "Malmö", "status": "cancelled",
@@ -442,7 +482,7 @@ def ensure_dev_bookings(user_email, db_path):
         for sample in samples:
             booking = dict.fromkeys(_BOOKING_DETAIL_COLUMNS[1:])
             booking.update(
-                name=user[1], email=user_email, organization_number=user[2],
+                name=user[1], email=user_email,
                 lokalansvar="sakerhetsutbildarna",
             )
             booking.update(sample)
@@ -456,12 +496,13 @@ def ensure_dev_bookings(user_email, db_path):
                 else "Säkerhetsutbildarna ordnar lokalen"
             )
             booking_ids.append(_insert_booking(cursor, tuple(booking), tuple(booking.values())))
+        logger.debug("Exempelbokningar förberedda; antal=%s.", len(booking_ids))
         return booking_ids
 
 
 def authenticate_user(email, password, db_path):
     """Authenticate a user and return the database-backed account role."""
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "authenticate_user") as cursor:
         _execute(
             cursor,
             "SELECT id, name, organization_number, email, role, password FROM users "
@@ -471,6 +512,7 @@ def authenticate_user(email, password, db_path):
         user = cursor.fetchone()
 
     if user is None:
+        logger.debug("Autentisering misslyckades.")
         return None
     stored_password = user[5]
     if (
@@ -480,12 +522,14 @@ def authenticate_user(email, password, db_path):
         try:
             valid = check_password_hash(stored_password, password)
         except ValueError:
+            logger.warning("Autentisering misslyckades; ogiltigt lösenordshashformat.")
             valid = False
     else:
         # Existing accounts remain usable until a separate password migration.
         valid = secrets.compare_digest(
             stored_password.encode("utf-8"), password.encode("utf-8")
         )
+    logger.debug("Autentisering slutförd; godkänd=%s.", valid)
     return user[:5] if valid else None
 
 
@@ -493,13 +537,14 @@ def login_user(email, password, role, db_path):
     """Authenticate a specific role (kept for backwards compatibility)."""
     user = authenticate_user(email, password, db_path)
     if user is None or user[4] != role:
+        logger.debug("Rollspecifik autentisering nekades.")
         return None
     return user[:3]
 
 
 def get_user_role(user_id, db_path):
     """Return the user's current role so access follows database changes."""
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_user_role") as cursor:
         _execute(cursor, "SELECT role FROM users WHERE id = %s", (user_id,))
         row = cursor.fetchone()
         return row[0] if row else None
@@ -507,7 +552,7 @@ def get_user_role(user_id, db_path):
 
 def get_user_identity(user_id, db_path):
     """Read the current identity rather than authorizing a cached session email."""
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_user_identity") as cursor:
         _execute(cursor, "SELECT id, name, email, organization_number, role "
                  "FROM users WHERE id = %s", (user_id,))
         row = cursor.fetchone()
@@ -515,7 +560,7 @@ def get_user_identity(user_id, db_path):
 
 
 def get_booking_by_name(name, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_booking_by_name") as cursor:
         _execute(
             cursor,
             f"SELECT {_LEGACY_BOOKING_SELECT} FROM bookings WHERE name = %s",
@@ -525,7 +570,7 @@ def get_booking_by_name(name, db_path):
 
 
 def get_all_bookings(db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_all_bookings") as cursor:
         if isinstance(cursor, sqlite3.Cursor):
             # SQLite's built-in lower() only converts ASCII characters.
             cursor.connection.create_function(
@@ -589,14 +634,14 @@ def list_booking_details(db_path, email=None, status=None):
         "WHEN 'awaiting_response' THEN 3 WHEN 'accepted' THEN 4 "
         "WHEN 'rescheduled' THEN 5 ELSE 6 END, b.id DESC"
     )
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "list_booking_details") as cursor:
         _execute(cursor, query, params)
         return [dict(zip((*_BOOKING_DETAIL_COLUMNS, "latest_event", "latest_event_at"), row))
                 for row in cursor.fetchall()]
 
 
 def get_booking_proposals(booking_id, db_path):
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_booking_proposals") as cursor:
         _execute(cursor, f"SELECT {', '.join(_PROPOSAL_COLUMNS)} "
                  "FROM booking_proposals WHERE booking_id = %s ORDER BY id ASC", (booking_id,))
         return [dict(zip(_PROPOSAL_COLUMNS, row)) for row in cursor.fetchall()]
@@ -606,7 +651,7 @@ def get_booking_history(booking_id, db_path, include_private=True):
     query = f"SELECT {', '.join(_HISTORY_COLUMNS)} FROM booking_history WHERE booking_id = %s"
     if not include_private:
         query += " AND is_private = 0"
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "get_booking_history") as cursor:
         _execute(cursor, query + " ORDER BY id ASC", (booking_id,))
         return [dict(zip(_HISTORY_COLUMNS, row)) for row in cursor.fetchall()]
 
@@ -630,23 +675,30 @@ def create_proposal(booking_id, proposed_date, proposed_city, proposed_venue, db
     try:
         parsed = date.fromisoformat(proposed_date)
     except (ValueError, TypeError):
+        logger.warning("Datumförslag avvisades; orsak=ogiltigt_datum.")
         raise ValueError("Ange ett giltigt datum.") from None
     if parsed.isoformat() != proposed_date:
+        logger.warning("Datumförslag avvisades; orsak=ogiltigt_datumformat.")
         raise ValueError("Ange ett giltigt datum.")
     if not isinstance(proposed_city, str) or not proposed_city.strip() or len(proposed_city) > 200:
+        logger.warning("Datumförslag avvisades; orsak=ogiltig_ort.")
         raise ValueError("Ange en ort med högst 200 tecken.")
     if not isinstance(proposed_venue, str) or not proposed_venue.strip() or len(proposed_venue) > 1000:
+        logger.warning("Datumförslag avvisades; orsak=ogiltig_lokal.")
         raise ValueError("Ange en lokal med högst 1 000 tecken.")
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "create_proposal") as cursor:
         booking = _lock_booking(cursor, booking_id)
         if not booking or booking["status"] not in {"pending", "registered", "new_date_requested"}:
+            logger.warning("Datumförslag avvisades; bokning saknas eller status tillåter inte ändringen.")
             return None
         if expected_status is not None and booking["status"] != expected_status:
+            logger.warning("Datumförslag avvisades; bokningens status har ändrats.")
             return None
         if expected_previous_proposal_id is not _UNSET:
             _execute(cursor, "SELECT id FROM booking_proposals WHERE booking_id = %s ORDER BY id DESC LIMIT 1", (booking_id,))
             latest = cursor.fetchone()
             if (latest[0] if latest else None) != expected_previous_proposal_id:
+                logger.warning("Datumförslag avvisades; föregående förslag har ändrats.")
                 return None
         _execute(cursor,
                  "INSERT INTO booking_proposals (booking_id, proposed_date, proposed_city, "
@@ -664,16 +716,19 @@ def create_proposal(booking_id, proposed_date, proposed_city, proposed_venue, db
 def respond_to_proposal(booking_id, proposal_id, email, action, db_path, actor_id=None):
     """Apply exactly one response to the current proposal, under the booking lock."""
     if action not in {"accept", "new_date", "cancel"} or not email:
+        logger.warning("Svar på datumförslag avvisades; ogiltig åtgärd eller kund saknas.")
         return False
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "respond_to_proposal") as cursor:
         booking = _lock_booking(cursor, booking_id, email=email)
         if not booking or booking["status"] != "awaiting_response":
+            logger.warning("Svar på datumförslag avvisades; ägarskap eller bokningsstatus tillåter inte åtgärden.")
             return False
         _execute(cursor, f"SELECT {', '.join(_PROPOSAL_COLUMNS)} FROM booking_proposals "
                  "WHERE id = %s AND booking_id = %s AND state = 'pending'",
                  (proposal_id, booking_id))
         row = cursor.fetchone()
         if row is None:
+            logger.warning("Svar på datumförslag avvisades; aktuellt obesvarat förslag saknas.")
             return False
         proposal = dict(zip(_PROPOSAL_COLUMNS, row))
         target, proposal_state, note = {
@@ -696,10 +751,12 @@ def respond_to_proposal(booking_id, proposal_id, email, action, db_path, actor_i
 def transition_booking(booking_id, target, db_path, actor="admin", email=None, actor_id=None):
     """Enforce the role-specific status graph without allowing direct acceptance."""
     if actor not in {"admin", "customer"} or (actor == "customer" and not email):
+        logger.warning("Statusändring avvisades; ogiltig aktör eller kund saknas.")
         return False
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "transition_booking") as cursor:
         booking = _lock_booking(cursor, booking_id, email=email if actor == "customer" else None)
         if booking is None:
+            logger.warning("Statusändring avvisades; bokning saknas eller tillhör annan kund.")
             return False
         source = booking["status"]
         if actor == "customer":
@@ -707,6 +764,7 @@ def transition_booking(booking_id, target, db_path, actor="admin", email=None, a
         else:
             allowed = target in ADMIN_TRANSITIONS.get(source, ())
         if not allowed:
+            logger.warning("Statusändring avvisades; otillåten statusövergång.")
             return False
         _execute(cursor, "UPDATE bookings SET status = %s WHERE id = %s", (target, booking_id))
         if target == "cancelled":
@@ -728,10 +786,12 @@ def transition_booking(booking_id, target, db_path, actor="admin", email=None, a
 
 def add_booking_note(booking_id, note, db_path, actor_id=None):
     if not isinstance(note, str) or not note.strip() or len(note) > 5000:
+        logger.warning("Bokningsanteckning avvisades; ogiltigt innehåll eller längd.")
         return False
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "add_booking_note") as cursor:
         booking = _lock_booking(cursor, booking_id)
         if booking is None:
+            logger.warning("Bokningsanteckning avvisades; bokning saknas.")
             return False
         _record_history(cursor, booking_id, booking["status"], booking["status"], "admin",
                         note.strip(), actor_id, kind="note", is_private=True)
@@ -740,7 +800,7 @@ def add_booking_note(booking_id, note, db_path, actor_id=None):
 
 def claim_proposal_delivery(proposal_id, db_path):
     """Only one request may send/retry a still-current unanswered proposal."""
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "claim_proposal_delivery") as cursor:
         _execute(cursor, "UPDATE booking_proposals SET delivery_status = 'sending' "
                  "WHERE id = %s AND state = 'pending' "
                  "AND delivery_status IN ('pending', 'failed', 'disabled') "
@@ -751,13 +811,15 @@ def claim_proposal_delivery(proposal_id, db_path):
 
 def finish_proposal_delivery(proposal_id, delivery_status, db_path):
     if delivery_status not in {"sent", "failed", "disabled"}:
+        logger.warning("Utskicksresultat avvisades; ogiltig leveransstatus.")
         raise ValueError("Okänt utskicksresultat.")
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "finish_proposal_delivery") as cursor:
         _execute(cursor, "UPDATE booking_proposals SET delivery_status = %s, sent_at = %s "
                  "WHERE id = %s AND delivery_status = 'sending' RETURNING booking_id",
                  (delivery_status, _now() if delivery_status == "sent" else None, proposal_id))
         row = cursor.fetchone()
         if row is None:
+            logger.warning("Utskicksresultat sparades inte; inget pågående utskick finns.")
             return False
         note = {
             "sent": "Datumförslaget har skickats med e-post.",
@@ -788,6 +850,7 @@ def _migrate_bookings(cursor):
         if column not in existing_columns:
             # Column names come exclusively from the fixed migration allowlist above.
             _execute(cursor, f"ALTER TABLE bookings ADD COLUMN {column} TEXT")
+            logger.debug("Databasmigrering förberedd; ny bokningskolumn=%s.", column)
 
     # A legacy pending row can only represent the old exact-date request form.
     # Accepted/cancelled rows may already contain administrator-confirmed values,
@@ -862,7 +925,7 @@ def create_database(db_path):
     else:
         id_column = "INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"
 
-    with _cursor(db_path) as cursor:
+    with _cursor(db_path, "create_database") as cursor:
         if not isinstance(cursor, sqlite3.Cursor):
             # Serialize additive migrations across simultaneous application
             # startups without holding a session lock after commit.

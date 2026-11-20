@@ -15,7 +15,9 @@ def run_app(tmp_path):
     project = Path(__file__).resolve().parents[1]
     for module in (
         "app.py",
+        "logging_config.py",
         "csrf.py",
+        "company_lookup.py",
         "database.py",
         "dev_accounts.py",
         "gen_func.py",
@@ -32,6 +34,7 @@ def run_app(tmp_path):
     def run(dev_mode, code, **overrides):
         settings = {
             "DEV_MODE": dev_mode,
+            "DEBUG": "false",
             "app_secret_key": "dev-mode-test-key",
             "db_path": "postgresql://example.invalid/kursplan",
             "test_email": "admin@example.com",
@@ -72,7 +75,7 @@ def run_app(tmp_path):
     return run
 
 
-def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
+def test_dev_mode_uses_temporary_database_without_enabling_debug_logging(run_app):
     output = run_app(
         "On",
         """
@@ -100,7 +103,7 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
             assert "temporär SQLite-fil" in logs.getvalue()
             assert "secret-test-marker" not in logs.getvalue()
             assert app.config["DEV_MODE"] is True
-            assert app.logger.isEnabledFor(logging.DEBUG)
+            assert not app.logger.isEnabledFor(logging.DEBUG)
             assert not app.debug
             db_path = app.config["DB_PATH"]
             assert isinstance(db_path, Path) and db_path.is_file()
@@ -249,7 +252,7 @@ def test_dev_mode_uses_configured_postgresql_database_and_preserves_data(run_app
         # dotenv loaded db_path from the isolated test directory.
         expected_settings["connect_timeout"] = "5"
         assert conninfo_to_dict(app.config["DB_PATH"]) == expected_settings
-        assert app.logger.isEnabledFor(logging.DEBUG)
+        assert not app.logger.isEnabledFor(logging.DEBUG)
         assert len(database.get_all_bookings(app.config["DB_PATH"])) == 5
         assert len(database.get_bookings_by_email("existing@example.com", app.config["DB_PATH"])) == 1
         accounts = json.loads(Path(".dev-accounts.json").read_text(encoding="utf-8"))
@@ -406,6 +409,61 @@ def test_dev_mode_off_uses_configured_postgresql_database(run_app):
     )
 
 
+@pytest.mark.parametrize("dev_mode", ["true", "false"])
+def test_dotenv_debug_is_independent_of_dev_mode(run_app, dev_mode):
+    run_app(
+        dev_mode,
+        """
+        import logging
+        from app import app
+        assert app.logger.isEnabledFor(logging.DEBUG)
+        assert app.config["LOG_DEBUG"] is True
+        assert not app.debug
+        app.logger.debug("debug-from-dotenv-marker")
+        from pathlib import Path
+        assert "debug-from-dotenv-marker" in Path(app.config["LOG_FILE"]).read_text(encoding="utf-8")
+        """,
+        DEBUG="true", db_path=None if dev_mode == "true" else "postgresql://example.invalid/kursplan",
+    )
+
+
+def test_log_file_survives_separate_process_starts(run_app):
+    run_app("false", """
+        from app import app
+        app.logger.info("marker-from-first-process")
+    """)
+    run_app("false", """
+        from pathlib import Path
+        from app import app
+        app.logger.info("marker-from-second-process")
+        output = Path(app.config["LOG_FILE"]).read_text(encoding="utf-8")
+        assert "marker-from-first-process" in output
+        assert "marker-from-second-process" in output
+        assert output.count("Loggning initierad") == 2
+    """)
+
+
+def test_server_start_failure_is_logged_as_critical(run_app):
+    run_app("false", """
+        from pathlib import Path
+        from runpy import run_path
+        from unittest.mock import patch
+        with (
+            patch("database.create_database"),
+            patch("database.ensure_test_user"),
+            patch("logging_config.LoggedFlask.run", side_effect=SystemExit(1)),
+        ):
+            try:
+                run_path("app.py", run_name="__main__")
+            except SystemExit as error:
+                assert error.code == 1
+            else:
+                raise AssertionError("server startup failure was hidden")
+        output = Path("logs/kursplan.log").read_text(encoding="utf-8")
+        assert "CRITICAL" in output and "felkod under serverstart" in output
+    """)
+
+
 def test_dev_mode_creates_two_usable_accounts_without_settings(run_app):
     run_app(
         "true",
@@ -426,6 +484,9 @@ def test_dev_mode_creates_two_usable_accounts_without_settings(run_app):
             accounts["user"]["email"], app.config["DB_PATH"],
         )
         assert len(original_bookings) == 4
+        assert {row[3] for row in original_bookings} == {
+            "5560747551", "5560125790", "5560160680", "5560427220",
+        }
         assert sorted(row[9] for row in original_bookings) == [
             "accepted", "cancelled", "pending", "pending",
         ]

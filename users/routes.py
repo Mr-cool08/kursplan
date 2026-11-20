@@ -60,6 +60,7 @@ def _current_database_role():
 
     user = database.get_user_identity(user_id, current_app.config["DB_PATH"])
     if user is None or user["role"] not in VALID_ROLES:
+        current_app.logger.warning("Kundsession avvisades: kontot saknas eller har en ogiltig roll.")
         session.clear()
         return None
 
@@ -260,14 +261,17 @@ def index():
 @user_page.route('/dashboard')
 def dashboard():
     if _current_database_role() is None:
+        current_app.logger.warning("Åtkomst till kundöversikten kräver inloggning.")
         return redirect(url_for('user_page.login'))
     name = session.get('user_name')
     email = session.get('user_email')
     organization_number = session.get('organization_number')
     if not email:
+        current_app.logger.warning("Kundsession avvisades: obligatoriska kontouppgifter saknas.")
         session.clear()
         return redirect(url_for('user_page.login'))
     bookings = database.list_booking_details(current_app.config["DB_PATH"], email=email)
+    current_app.logger.debug("Kundöversikt hämtad med %s bokningar.", len(bookings))
 
     return render_template(
         'dashboard.html',
@@ -289,11 +293,14 @@ def signup():
         password = request.form.get('password', '')
         organization_number = request.form.get('organization_number', '').strip()
         if not name or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or not password or not organization_number:
+            current_app.logger.warning("Kontoregistrering nekades: ogiltiga eller saknade formulärfält.")
             return render_template('signup.html', error='Fyll i namn, giltig e-postadress, lösenord och organisationsnummer.', csrf_token=get_booking_csrf_token()), 400
         if database.check_user_exists(email, db_path):
+            current_app.logger.warning("Kontoregistrering nekades: kontot finns redan.")
             return render_template('signup.html', error='Det finns redan ett konto med denna e-postadress.', csrf_token=get_booking_csrf_token()), 400
         role = "user"
         user = database.create_user(name, email, generate_password_hash(password), organization_number, role, db_path)
+        current_app.logger.info("Kundkonto skapat: user_id=%s.", user[0])
         session.clear()
         session['user_id'] = user[0]
         session['user_name'] = user[1]
@@ -318,6 +325,7 @@ def login():
         email = request.form.get('email', '').strip()
         password = request.form.get('password', '')
         if not email or not password:
+            current_app.logger.warning("Inloggning nekades: inloggningsuppgifter saknas.")
             return render_template('login.html', error='Ange både e-postadress och lösenord.', next_url=next_url, csrf_token=get_booking_csrf_token())
 
         user = database.authenticate_user(email, password, current_app.config["DB_PATH"])
@@ -331,8 +339,10 @@ def login():
                 user_email=user_email,
                 role=role,
             )
+            current_app.logger.info("Inloggning lyckades: user_id=%s role=%s.", user_id, role)
             return redirect(next_url) if next_url else _dashboard_redirect(role)
 
+        current_app.logger.warning("Inloggning nekades: felaktiga inloggningsuppgifter eller otillåten roll.")
         return render_template('login.html', error='Felaktig e-postadress eller lösenord.', next_url=next_url, csrf_token=get_booking_csrf_token())
     return render_template('login.html', next_url=next_url, csrf_token=get_booking_csrf_token())
 
@@ -340,6 +350,7 @@ def login():
 @user_page.route('/booking', methods=['GET', 'POST'])
 def booking():
     if _current_database_role() is None:
+        current_app.logger.warning("Åtkomst till bokningsformuläret kräver inloggning.")
         return redirect(url_for('user_page.login'))
 
     utbildningar = read_utbildningar_from_json()
@@ -362,6 +373,7 @@ def booking():
 
     normalized, errors = _validate_booking_form(request.form, utbildningar)
     if errors:
+        current_app.logger.warning("Bokningsförfrågan nekades: ogiltiga fält=%s.", ",".join(sorted(errors)))
         return _render_booking_form(
             utbildningar=utbildningar,
             values=values,
@@ -373,6 +385,7 @@ def booking():
     email = session.get('user_email')
     organization_number = session.get('organization_number')
     if name is None or email is None or organization_number is None:
+        current_app.logger.warning("Bokningsförfrågan nekades: obligatoriska kontouppgifter saknas.")
         return redirect(url_for("logout"))
 
     booking_id = database.create_booking_request(
@@ -383,7 +396,7 @@ def booking():
         **normalized,
     )
     clear_booking_csrf_token()
-    current_app.logger.debug("Created booking %s", booking_id)
+    current_app.logger.info("Bokningsförfrågan skapad: booking_id=%s.", booking_id)
     return redirect(url_for('user_page.dashboard'))
 
 
@@ -391,6 +404,7 @@ def booking():
 def cancel_booking(booking_id):
     role = _current_database_role()
     if role is None:
+        current_app.logger.warning("Avbokning nekades: inloggning krävs. booking_id=%s.", booking_id)
         return redirect(url_for('user_page.login'))
     if not validate_booking_csrf_token(request.form.get("csrf_token", "")):
         return "Formuläret kunde inte verifieras. Ladda om sidan och försök igen.", 400
@@ -405,7 +419,10 @@ def cancel_booking(booking_id):
     )
     clear_booking_csrf_token()
     if not changed:
+        current_app.logger.warning("Avbokning nekades: aktuell status eller behörighet tillåter inte ändringen. booking_id=%s.", booking_id)
         flash("Bokningen kunde inte avbrytas. Kontrollera aktuell status och behörighet.", "error")
+    else:
+        current_app.logger.info("Bokning avbruten: booking_id=%s.", booking_id)
     if role == "admin":
         return redirect(url_for('admin_page.dashboard'))
     return redirect(url_for('user_page.dashboard'))
@@ -415,35 +432,43 @@ def cancel_booking(booking_id):
 def booking_detail(booking_id):
     role = _current_database_role()
     if role is None:
+        current_app.logger.warning("Bokningsdetaljer kräver inloggning: booking_id=%s.", booking_id)
         return _booking_login_redirect()
     booking = database.get_booking_details_by_id(booking_id, current_app.config["DB_PATH"])
     if not booking or booking["email"] != session.get("user_email"):
+        current_app.logger.warning("Bokningsdetaljer nekades: bokningen saknas eller tillhör ett annat konto. booking_id=%s.", booking_id)
         abort(404)
+    current_app.logger.debug("Kundens bokningsdetaljer hämtade: booking_id=%s.", booking_id)
     return render_template("booking_detail.html", **booking_detail_context(booking))
 
 
 @user_page.route('/bookings/<int:booking_id>/proposals/<int:proposal_id>/respond', methods=['POST'])
 def respond_proposal(booking_id, proposal_id):
     if _current_database_role() is None:
+        current_app.logger.warning("Svar på datumförslag nekades: inloggning krävs. booking_id=%s proposal_id=%s.", booking_id, proposal_id)
         return redirect(url_for("user_page.login", next=url_for("user_page.booking_detail", booking_id=booking_id)))
     _check_csrf()
     db_path = current_app.config["DB_PATH"]
     booking = database.get_booking_details_by_id(booking_id, db_path)
     if not booking or booking["email"] != session.get("user_email"):
+        current_app.logger.warning("Svar på datumförslag nekades: bokningen saknas eller tillhör ett annat konto. booking_id=%s proposal_id=%s.", booking_id, proposal_id)
         abort(404)
     action = request.form.get("action", "")
     if action not in {"accept", "new_date", "cancel"}:
+        current_app.logger.warning("Svar på datumförslag nekades: ogiltigt svarsalternativ. booking_id=%s proposal_id=%s.", booking_id, proposal_id)
         abort(400, description="Välj ett giltigt svar på förslaget.")
     changed = database.respond_to_proposal(
         booking_id, proposal_id, session["user_email"], action, db_path,
         actor_id=session["user_id"],
     )
     if not changed:
+        current_app.logger.warning("Svar på datumförslag nekades: förslaget är inte längre aktuellt. booking_id=%s proposal_id=%s.", booking_id, proposal_id)
         return render_template(
             "booking_detail.html", error="Förslaget är inte längre aktuellt. Läs bokningens senaste uppgifter innan du svarar.",
             **booking_detail_context(database.get_booking_details_by_id(booking_id, db_path)),
         ), 409
     clear_booking_csrf_token()
+    current_app.logger.info("Svar på datumförslag sparat: booking_id=%s proposal_id=%s action=%s.", booking_id, proposal_id, action)
     messages = {
         "accept": "Du har accepterat förslaget. Utbildningen är nu bekräftad.",
         "new_date": "Du har begärt ett nytt datumförslag. Vi återkommer med ett nytt förslag.",

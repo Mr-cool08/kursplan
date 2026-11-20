@@ -4,6 +4,7 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
+{% if is_admin %}<script src="{{ url_for('static', filename='js/admin_companies.js') }}" defer></script>{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -77,6 +78,7 @@
         <div class="fact-wide"><dt>{{ 'Kundens lokaladress' if booking.lokalansvar == 'kund' else 'Ursprunglig lokaluppgift' }}</dt><dd>{{ booking.lokaladress or booking.lokal or 'Inte angiven' }}</dd></div>
         {% if is_admin %}
         <div><dt>Kund</dt><dd>{{ booking.name }}</dd></div>
+        <div><dt>Företag</dt><dd class="workflow-muted" data-company-url="{{ url_for('admin_page.company_name', booking_id=booking.id) }}" data-company-organization="{{ booking.organization_number }}" data-company-state="idle" role="status">Företagsnamn ej hämtat</dd></div>
         <div><dt>Företagets organisationsnummer</dt><dd>{{ booking.organization_number }}</dd></div>
         <div class="fact-wide"><dt>E-postadress</dt><dd><a href="mailto:{{ booking.email }}">{{ booking.email }}</a></dd></div>
         {% endif %}

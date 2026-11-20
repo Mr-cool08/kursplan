@@ -10,6 +10,10 @@ services:
     environment:
       db_path: postgresql://postgres:${db_password:-password}@db:5432/postgres
       app_port: 8000
+      LOG_DIR: /app/logs
+
+    volumes:
+      - app_logs:/app/logs
 
     depends_on:
       db:
@@ -43,6 +47,7 @@ services:
             - __pycache__/
             - .git/
             - .venv/
+            - logs/
 
     networks:
       tunnel:
@@ -109,6 +114,7 @@ networks:
 
 volumes:
   postgres_data:
+  app_logs:
 
 
 configs:

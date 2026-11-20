@@ -1,21 +1,41 @@
 {% extends "base.html" %}
 {% block title %}Hem{% endblock %}
 {% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/public.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style/home.css') }}">
-
 {% endblock %}
 {% block content %}
-
-<div class="home-hero-container">
-  <img src="{{ url_for('static', filename='images/6db5e7cf-5403-41be-a14c-a5824d08f610.png') }}" alt="kursplan" class="home-hero">
-  <div class="home-container">
-    <h1>Välkommen</h1>
-    <p>Välj ett alternativ:</p>
-    <ul class="home-options">
-      <li><a href="{{ url_for('user_page.signup') }}">Skapa konto</a></li>
-      <li><a href="{{ url_for('user_page.login') }}">Logga in</a></li>
-    </ul>
+<main class="public-page home-page">
+  <div class="public-container">
+    <section class="home-hero" aria-labelledby="home-heading">
+      <div class="home-intro">
+        <p class="public-kicker">Kursplan · Företagsutbildning</p>
+        <h1 id="home-heading">Nästa utbildning<br>börjar här.</h1>
+        <p class="public-intro">Samla företagets utbildningar på ett ställe. Skicka en förfrågan och följ dina bokningar, från första önskemål till planerad utbildning.</p>
+        <div class="home-actions">
+          <a class="public-button primary" href="{{ url_for('user_page.signup') }}">Skapa konto <span aria-hidden="true">&rarr;</span></a>
+          <a class="public-button secondary" href="{{ url_for('user_page.login') }}">Logga in</a>
+        </div>
+      </div>
+      <div class="home-visual">
+        <img src="{{ url_for('static', filename='images/6db5e7cf-5403-41be-a14c-a5824d08f610.png') }}" alt="" width="1672" height="941">
+        <div class="home-visual-caption">
+          <span class="public-kicker">Från önskemål till bokning</span>
+          <p>Mer plats för lärande.</p>
+        </div>
+      </div>
+    </section>
+    <section class="home-process" aria-labelledby="process-heading">
+      <div class="home-process-heading">
+        <p class="public-kicker">Så fungerar det</p>
+        <h2 id="process-heading">En enkel väg till nästa utbildning.</h2>
+      </div>
+      <ol class="home-steps">
+        <li><span class="home-step-number" aria-hidden="true">01</span><div><h3>Skapa konto</h3><p>Registrera dig och ditt företag.</p></div></li>
+        <li><span class="home-step-number" aria-hidden="true">02</span><div><h3>Skicka en förfrågan</h3><p>Berätta vilken utbildning ni behöver.</p></div></li>
+        <li><span class="home-step-number" aria-hidden="true">03</span><div><h3>Följ din bokning</h3><p>Se status och svara på datumförslag.</p></div></li>
+      </ol>
+    </section>
   </div>
-</div>
-
+</main>
 {% endblock %}

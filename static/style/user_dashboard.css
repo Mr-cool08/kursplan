@@ -1,4 +1,4 @@
-/* Loaded only by the customer dashboard; admin keeps dashboard.css. */
+/* Shared portal styles; customer overview contrast is scoped below. */
 body {
     display: flex;
     flex-direction: column;
@@ -300,6 +300,158 @@ footer {
     margin: 12px 0 24px;
     color: #52617a;
     line-height: 1.6;
+}
+
+/* Stronger contrast is limited to the customer's booking overview. */
+.customer-dashboard {
+    background: #e5ebf2;
+    color: #182b48;
+}
+
+.customer-dashboard .dashboard-header {
+    padding: clamp(24px, 4vw, 40px);
+    border: 1px solid #182b48;
+    border-radius: 16px;
+    background: #182b48;
+}
+
+.customer-dashboard .dashboard-header h1 {
+    color: #fefefe;
+}
+
+.customer-dashboard .dashboard-kicker {
+    color: #f4bb75;
+}
+
+.customer-dashboard .dashboard-intro {
+    color: #dce5f2;
+}
+
+.customer-dashboard .dashboard-header .dashboard-button.primary {
+    border-color: #f4bb75;
+    background: #f4bb75;
+    color: #182b48;
+}
+
+.customer-dashboard .dashboard-header .dashboard-button.primary:hover {
+    border-color: #ffcf92;
+    background: #ffcf92;
+}
+
+.customer-dashboard .dashboard-header .dashboard-button.primary:active {
+    border-color: #e7a657;
+    background: #e7a657;
+}
+
+.customer-dashboard .dashboard-header a:focus-visible {
+    outline-color: #fefefe;
+}
+
+.customer-dashboard .booking-count,
+.customer-dashboard .booking-reference,
+.customer-dashboard dt,
+.customer-dashboard .empty-state p {
+    color: #344967;
+}
+
+.customer-dashboard .booking-count {
+    font-weight: 700;
+}
+
+.customer-dashboard .booking-card,
+.customer-dashboard .empty-state {
+    border-color: #98aac1;
+    background: #fefefe;
+}
+
+.customer-dashboard .booking-card-topline {
+    padding-bottom: 16px;
+    border-bottom: 1px solid #c3cfde;
+}
+
+.customer-dashboard dt {
+    font-weight: 700;
+}
+
+.customer-dashboard dd {
+    color: #182b48;
+}
+
+.customer-dashboard .dashboard-button.secondary {
+    border-color: #607796;
+    background: #fefefe;
+    color: #203e68;
+}
+
+.customer-dashboard .dashboard-button.secondary:hover {
+    border-color: #284773;
+    background: #dce6f3;
+}
+
+.customer-dashboard .dashboard-button.secondary:active {
+    background: #cbd9eb;
+}
+
+.customer-dashboard .cancel-button {
+    border-color: #a04b43;
+    background: #fefefe;
+    color: #8b302a;
+}
+
+.customer-dashboard .cancel-button:hover {
+    border-color: #8b302a;
+    background: #fbe9e6;
+}
+
+.customer-dashboard .cancel-button:active {
+    background: #f4d5d1;
+}
+
+.customer-dashboard .status-pill {
+    border: 1px solid currentColor;
+}
+
+.customer-dashboard .status-pill.pending,
+.customer-dashboard .status-pill.new_date_requested {
+    background: #fff0d5;
+    color: #70400d;
+}
+
+.customer-dashboard .status-pill.registered,
+.customer-dashboard .status-pill.rescheduled {
+    background: #e2ebf8;
+    color: #234577;
+}
+
+.customer-dashboard .status-pill.awaiting_response {
+    background: #75400f;
+    color: #fff5e6;
+}
+
+.customer-dashboard .status-pill.accepted,
+.customer-dashboard .status-pill.completed {
+    background: #e4f1e8;
+    color: #184e2e;
+}
+
+.customer-dashboard .status-pill.cancelled {
+    background: #fbe9e6;
+    color: #8b302a;
+}
+
+.customer-dashboard.workflow-page .booking-card.needs-response {
+    border: 2px solid #9a5b17;
+    background: #fff9f0;
+}
+
+.customer-dashboard.workflow-page .response-prompt {
+    color: #75400f;
+}
+
+.customer-dashboard.workflow-page .workflow-message.attention {
+    border-color: #9a5b17;
+    background: #fff0d5;
+    color: #65390e;
 }
 
 @media (min-width: 48rem) {

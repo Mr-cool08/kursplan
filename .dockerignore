@@ -7,3 +7,6 @@ kursplan-dev-*.db*
 __pycache__/
 *.py[cod]
 .pytest_cache/
+logs/
+*.log
+*.log.*

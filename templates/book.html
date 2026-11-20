@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Boka utbildning{% endblock %}
 {% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/public.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='style/book.css') }}">
 <script src="{{ url_for('static', filename='js/book.js') }}" defer></script>
 {% endblock %}
@@ -13,11 +14,20 @@
 {% set selected_venue_responsibility = form_values.get('lokalansvar', '') %}
 {% set general_error = form_errors.get('_form') or form_errors.get('form') or form_errors.get('csrf_token') %}
 
-<main class="booking-page">
-  <h1>Bokning av utbildning</h1>
-  <p class="booking-intro">
-    Skicka en förfrågan med era önskemål. Datum och ort bekräftas först när förfrågan har behandlats.
-  </p>
+<main class="public-page booking-page">
+  <div class="public-container booking-layout">
+  <section class="booking-intro" aria-labelledby="booking-heading">
+    <a class="public-back" href="{{ url_for('user_page.dashboard') }}"><span aria-hidden="true">&larr;</span> Till mina bokningar</a>
+    <p class="public-kicker">Nästa utbildning</p>
+    <h1 id="booking-heading">Bokning av utbildning</h1>
+    <p class="public-intro">
+      Skicka en förfrågan med era önskemål. Datum och ort bekräftas först när förfrågan har behandlats.
+    </p>
+    <div class="booking-next-step">
+      <h2>Vad händer sedan?</h2>
+      <p>Vi går igenom era önskemål och återkommer med ett datumförslag. Du följer förfrågan och svarar på förslaget under Mina bokningar.</p>
+    </div>
+  </section>
 
   <form id="booking-form" class="booking-form" action="{{ url_for('user_page.booking') }}" method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
@@ -152,20 +162,30 @@
 
       <div id="catalog-course-fields" class="conditional-fields"{% if selected_course_source != 'katalog' %} hidden{% endif %}>
         <div class="field-group">
-          <label for="utbildning-sok">Sök utbildning</label>
-          <input
-            type="search"
-            id="utbildning-sok"
-            autocomplete="off"
-            aria-describedby="utbildning-sok-hjalp utbildning-sok-status"
-            placeholder="Skriv hela eller delar av namnet"
-          >
-          <p class="field-help" id="utbildning-sok-hjalp">Sökningen filtrerar listan medan du skriver.</p>
-          <p class="search-status" id="utbildning-sok-status" role="status" aria-live="polite"></p>
-        </div>
-
-        <div class="field-group">
-          <label for="utbildning">Välj utbildning <span class="field-requirement">(obligatoriskt)</span></label>
+          <label id="utbildning-label" for="utbildning">Sök och välj utbildning <span class="field-requirement">(obligatoriskt)</span></label>
+          <div class="course-picker" id="utbildning-valjare" hidden>
+            <input
+              type="text"
+              id="utbildning-sok"
+              value="{{ form_values.get('utbildning', '') }}"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="utbildning-lista"
+              aria-describedby="utbildning-sok-hjalp utbildning-sok-status{% if form_errors.get('utbildning') %} utbildning-error{% endif %}"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Skriv eller välj en utbildning"
+              disabled
+              {% if form_errors.get('utbildning') %}aria-invalid="true"{% endif %}
+            >
+            <span class="course-picker-arrow" aria-hidden="true">&#9662;</span>
+            <ul id="utbildning-lista" class="course-options" role="listbox" aria-labelledby="utbildning-label" hidden>
+              {% for utbildning in utbildningar|default([]) %}
+              <li id="utbildning-alternativ-{{ loop.index }}" role="option" aria-selected="false">{{ utbildning }}</li>
+              {% endfor %}
+            </ul>
+          </div>
           <select
             id="utbildning"
             name="utbildning"
@@ -179,6 +199,8 @@
             <option value="{{ utbildning }}"{% if form_values.get('utbildning') == utbildning %} selected{% endif %}>{{ utbildning }}</option>
             {% endfor %}
           </select>
+          <p class="field-help" id="utbildning-sok-hjalp">Skriv för att söka och välj en utbildning i listan.</p>
+          <p class="search-status" id="utbildning-sok-status" role="status" aria-live="polite"></p>
           {% if form_errors.get('utbildning') %}
           <p class="field-error" id="utbildning-error" role="alert">{{ form_errors.get('utbildning') }}</p>
           {% endif %}
@@ -294,7 +316,11 @@
       </div>
     </fieldset>
 
-    <button class="booking-submit" type="submit">Skicka förfrågan</button>
+    <div class="booking-actions">
+      <p class="field-help">Du skickar en förfrågan. Utbildningen bekräftas när du accepterar ett datumförslag.</p>
+      <button class="public-button primary booking-submit" type="submit">Skicka förfrågan <span aria-hidden="true">&rarr;</span></button>
+    </div>
   </form>
+  </div>
 </main>
 {% endblock %}

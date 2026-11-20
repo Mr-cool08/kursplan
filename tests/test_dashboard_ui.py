@@ -1,4 +1,5 @@
 from html.parser import HTMLParser
+from math import isfinite
 from urllib.parse import urlsplit
 
 from flask import Flask, redirect, session, url_for
@@ -212,3 +213,70 @@ def test_empty_dashboard_offers_booking_on_mobile(page, dashboard_client):
     expect(empty_state_link).to_be_visible()
     expect(empty_state_link).to_have_attribute("href", "/booking")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def _text_contrasts(elements):
+    return elements.evaluate_all(r"""elements => {
+        const rgba = color => {
+            const values = color.match(/[\d.]+/g).map(Number);
+            return [...values.slice(0, 3), values[3] ?? 1];
+        };
+        const composite = (front, back) => [
+            ...front.slice(0, 3).map((value, i) =>
+                value * front[3] + back[i] * (1 - front[3])),
+            1
+        ];
+        const background = element => {
+            if (!element) return [255, 255, 255, 1];
+            const color = rgba(getComputedStyle(element).backgroundColor);
+            return color[3] === 1 ? color : composite(color, background(element.parentElement));
+        };
+        const luminance = color => color.slice(0, 3).map(value => {
+            const s = value / 255;
+            return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        }).reduce((sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i], 0);
+        return elements.map(element => {
+            const bg = background(element);
+            const fg = composite(rgba(getComputedStyle(element).color), bg);
+            const light = luminance(fg);
+            const dark = luminance(bg);
+            return {
+                text: element.textContent.trim().slice(0, 100),
+                ratio: (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05)
+            };
+        });
+    }""")
+
+
+def test_dashboard_text_actions_and_all_statuses_have_readable_contrast(
+    page, dashboard_client
+):
+    _, bookings = dashboard_client
+    covered = {booking["status"] for booking in bookings}
+    for index, status in enumerate(database.BOOKING_STATUSES, start=100):
+        if status not in covered:
+            bookings.append(bookings[0] | {"id": index, "status": status})
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    _open_dashboard(page, dashboard_client)
+    text = page.locator(
+        "main h1, main h2, main h3, main p, main dt, main dd, "
+        "main .booking-reference, main .booking-count, main .status-pill, "
+        "main .workflow-message, main a, main button"
+    )
+    failures = [
+        result for result in _text_contrasts(text)
+        if not isfinite(result["ratio"]) or result["ratio"] < 4.5
+    ]
+    assert not failures, f"Dashboard text falls below 4.5:1 contrast: {failures}"
+
+    for action in (
+        page.get_by_role("link", name="Gör ny bokning"),
+        page.get_by_role("link", name="Visa bokning").first,
+        page.get_by_role("button", name="Avbryt").first,
+        page.get_by_role("link", name="Logga ut"),
+    ):
+        action.hover()
+        action.focus()
+        result = _text_contrasts(action)[0]
+        assert result["ratio"] >= 4.5, f"Hovered/focused action has low contrast: {result}"

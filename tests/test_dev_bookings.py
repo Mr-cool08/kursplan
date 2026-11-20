@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import psycopg
 import pytest
 
+import company_lookup
 import database
 import gen_func
 
@@ -16,6 +17,12 @@ import gen_func
 USER_EMAIL = "demo-bookings@example.test"
 USER_NAME = "Exempelkund Åsa"
 ORGANIZATION = "5566778899"
+EXAMPLE_COMPANIES = {
+    "HLR": "5560747551",  # IKEA of Sweden AB
+    "Exempel: Anpassad säkerhetsutbildning": "5560125790",  # AB Volvo
+    "Heta arbeten": "5560160680",  # Telefonaktiebolaget LM Ericsson
+    "Första hjälpen": "5560427220",  # H & M Hennes & Mauritz AB
+}
 
 
 @pytest.fixture(params=("sqlite", "postgresql"))
@@ -68,6 +75,9 @@ def test_development_bookings_cover_customer_and_admin_examples_without_mail(
     send_mail = Mock(side_effect=AssertionError("Example bookings must not send email"))
     monkeypatch.setattr(gen_func, "send_booked_mail", send_mail)
     monkeypatch.setattr(gen_func, "SMTP", send_mail)
+    lookup = Mock(side_effect=AssertionError("Seeding must not call external APIs"))
+    monkeypatch.setattr(company_lookup, "_fetch_company_name", lookup)
+    original_user = database.get_user_identity(sample_user[0], booking_db_path)
 
     inserted_ids = database.ensure_dev_bookings(USER_EMAIL, booking_db_path)
 
@@ -81,11 +91,11 @@ def test_development_bookings_cover_customer_and_admin_examples_without_mail(
     assert {row["utbildningskalla"] for row in rows.values()} == {"katalog", "fritext"}
     assert {row["lokalansvar"] for row in rows.values()} == {"kund", "sakerhetsutbildarna"}
     assert any(row["onskad_ort"] is None for row in rows.values())
+    assert {row["utbildning"]: row["organization_number"] for row in rows.values()} == EXAMPLE_COMPANIES
 
     for row in rows.values():
-        assert (row["name"], row["email"], row["organization_number"]) == (
-            USER_NAME, USER_EMAIL, ORGANIZATION,
-        )
+        assert (row["name"], row["email"]) == (USER_NAME, USER_EMAIL)
+        assert company_lookup.normalize_organization_number(row["organization_number"]) == row["organization_number"]
         assert isinstance(row["antal"], int) and row["antal"] > 0
         assert row["utbildning"]
         assert row["ort"] == row["onskad_ort"]
@@ -117,6 +127,29 @@ def test_development_bookings_cover_customer_and_admin_examples_without_mail(
             assert row["faststallt_datum"] is None
             assert row["faststalld_ort"] is None
     send_mail.assert_not_called()
+    lookup.assert_not_called()
+    assert database.get_user_identity(sample_user[0], booking_db_path) == original_user
+
+
+def test_existing_seeded_company_numbers_and_user_profile_are_preserved(
+    booking_db_path, sample_user
+):
+    database.ensure_dev_bookings(USER_EMAIL, booking_db_path)
+    # Simulate the older examples, whose company number came from the user profile.
+    # A seed marker records the user only, so startup cannot safely identify and
+    # rewrite individual legacy rows without also risking manually edited bookings.
+    with database._cursor(booking_db_path) as cursor:
+        database._execute(
+            cursor,
+            "UPDATE bookings SET organization_number = %s WHERE email = %s",
+            (ORGANIZATION, USER_EMAIL),
+        )
+    original_bookings = _details(booking_db_path)
+    original_user = database.get_user_identity(sample_user[0], booking_db_path)
+
+    assert database.ensure_dev_bookings(USER_EMAIL, booking_db_path) == []
+    assert _details(booking_db_path) == original_bookings
+    assert database.get_user_identity(sample_user[0], booking_db_path) == original_user
 
 
 def test_restarting_does_not_reset_changes_or_recreate_deleted_examples(

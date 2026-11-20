@@ -1,9 +1,9 @@
-from flask import Flask, render_template, request, session, redirect, url_for
+from flask import render_template, request, session, redirect, url_for
 import sqlite3
 from datetime import datetime, timedelta
-import logging
 import smtplib
 import os
+import signal
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
@@ -16,20 +16,24 @@ import database
 from dev_accounts import load_dev_accounts
 from users import user_page
 from admin import admin_page
+from logging_config import LoggedFlask, configure_logging, register_request_logging
 
 
 load_dotenv(Path(__file__).with_name(".env"))
 dev_mode = os.getenv("DEV_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
-app = Flask(__name__)
+app = LoggedFlask(__name__)
+configure_logging(app)
+register_request_logging(app)
+app.logger.info("Applikationen startas: dev_mode=%s.", dev_mode)
 app.secret_key = os.getenv("app_secret_key")  # Use the secret key from the .env file
 app.config["DEV_MODE"] = dev_mode
 app.config["DB_PATH"] = os.getenv("db_path")
 
 if dev_mode:
     app.secret_key = app.secret_key or database.generate_secret_key()
-    app.logger.setLevel(logging.DEBUG)
 elif not app.config["DB_PATH"]:
+    app.logger.critical("Appstart avbruten: databasanslutning saknas i konfigurationen.")
     raise ValueError("Database path is not set in the .env file.")
 
 app.register_blueprint(user_page)
@@ -37,6 +41,7 @@ app.register_blueprint(admin_page)
 
 
 def initialize_database():
+    app.logger.info("Databasen initieras.")
     db_path = app.config["DB_PATH"]
     database.create_database(db_path)
 
@@ -54,6 +59,7 @@ def initialize_database():
         database.ensure_test_user(
             email=os.getenv("test_email"), password=os.getenv("test_password"), db_path=db_path,
         )
+    app.logger.info("Databasen är initierad.")
 
 
 def initialize_dev_database():
@@ -64,12 +70,12 @@ def initialize_dev_database():
             )
         except ProgrammingError:
             # Invalid connection settings also allow the local fallback.
-            pass
+            app.logger.warning("Utvecklingsdatabasens anslutningsinställningar är ogiltiga.")
         else:
             try:
                 initialize_database()
             except OperationalError:
-                pass
+                app.logger.warning("Anslutning till utvecklingsdatabasen misslyckades.")
             else:
                 app.logger.debug(
                     "Utvecklingsläge: använder den konfigurerade PostgreSQL-databasen."
@@ -91,11 +97,16 @@ def initialize_dev_database():
 
 
 if dev_mode:
-    dev_database_file = initialize_dev_database()
+    try:
+        dev_database_file = initialize_dev_database()
+    except Exception:
+        app.logger.critical("Appstart avbruten: utvecklingsdatabasen kunde inte initieras.", exc_info=True)
+        raise
 
 
 @app.route('/logout')
 def logout():
+    app.logger.info("Utloggning genomförd.")
     session.clear()
     return redirect(url_for('user_page.index'))  
 
@@ -327,8 +338,24 @@ if not dev_mode:
     app.add_url_rule('/submit', view_func=submit, methods=['GET', 'POST'])
 
 if __name__ == '__main__':
-    if not dev_mode:
-        initialize_database()
-    port = int(os.environ.get("app_port", 80))
-    host = os.environ.get("app_host", "0.0.0.0")
-    app.run(port=port, host=host, use_reloader=False, debug=dev_mode)
+    def stop_on_signal(signum, frame):
+        app.logger.info("Stoppsignal mottagen: signal=%s.", signum)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop_on_signal)
+    try:
+        if not dev_mode:
+            initialize_database()
+        port = int(os.environ.get("app_port", 80))
+        host = os.environ.get("app_host", "0.0.0.0")
+        app.logger.info("Webbservern startas: port=%s.", port)
+        app.run(port=port, host=host, use_reloader=False, debug=False)
+    except SystemExit as error:
+        if error.code:
+            app.logger.critical("Applikationen stoppades med en felkod under serverstart.")
+        raise
+    except Exception:
+        app.logger.critical("Applikationen kunde inte köras.", exc_info=True)
+        raise
+    finally:
+        app.logger.info("Webbservern har stoppats.")

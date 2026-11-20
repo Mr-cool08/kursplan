@@ -1,24 +1,46 @@
 {% extends "base.html" %}
-{% block title %}
-    Logga in
-{% endblock %}
+{% block title %}Logga in{% endblock %}
 {% block head %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style/auth.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/public.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/auth.css') }}">
 {% endblock %}
-
 {% block content %}
-<h1>Logga in</h1>
-<form method="POST" action="{{ url_for('user_page.login') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="next" value="{{ next_url or '' }}">
-    {% if error %}
-        <p class="error">{{ error }}</p>
-    {% endif %}
-    <label for="email">E-post:</label>
-    <input type="email" id="email" name="email" required>
-    <label for="password">Lösenord:</label>
-    <input type="password" id="password" name="password" required>
-    <input type="submit" value="Logga in">
-</form>
-
+<main class="public-page auth-page">
+  <div class="public-container auth-layout">
+    <section class="auth-intro" aria-labelledby="auth-intro-heading">
+      <a class="public-back" href="{{ url_for('user_page.index') }}"><span aria-hidden="true">&larr;</span> Till startsidan</a>
+      <p class="public-kicker">Välkommen tillbaka</p>
+      <h2 id="auth-intro-heading">Din nästa utbildning.<br>Allt samlat här.</h2>
+      <p class="public-intro">Fortsätt där du slutade. Här hittar du företagets utbildningsförfrågningar, bokningar och datumförslag.</p>
+      <ul class="auth-benefits">
+        <li><span aria-hidden="true">&check;</span> Följ dina utbildningsförfrågningar</li>
+        <li><span aria-hidden="true">&check;</span> Se och besvara datumförslag</li>
+        <li><span aria-hidden="true">&check;</span> Ha koll på kommande utbildningar</li>
+      </ul>
+    </section>
+    <section class="auth-panel" aria-labelledby="login-heading">
+      <div class="auth-panel-heading">
+        <p class="public-kicker">Ditt konto</p>
+        <h1 id="login-heading">Logga in</h1>
+        <p>Ange dina uppgifter för att komma vidare.</p>
+      </div>
+      <form class="auth-form" method="POST" action="{{ url_for('user_page.login') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ next_url or '' }}">
+        {% if error %}
+        <p class="auth-error error" role="alert">{{ error }}</p>
+        {% endif %}
+        <div class="auth-field">
+          <label for="email">E-post:</label>
+          <input type="email" id="email" name="email" required>
+        </div>
+        <div class="auth-field">
+          <label for="password">Lösenord:</label>
+          <input type="password" id="password" name="password" required>
+        </div>
+        <input class="public-button primary" type="submit" value="Logga in">
+      </form>
+    </section>
+  </div>
+</main>
 {% endblock %}
