@@ -32,7 +32,7 @@ def pipeline(monkeypatch):
     for name in (
         "verify_checkout", "fetch_revision", "verify_source", "production_web_image",
         "running_web_image", "export_source", "build_and_test", "run", "deploy",
-        "image_revision", "verify_database",
+        "image_revision", "verify_database", "verify_database_service",
     ):
         monkeypatch.setattr(update, name, getattr(steps, name))
 
@@ -53,12 +53,16 @@ def test_updates_only_after_build_and_tests_pass(pipeline):
     assert not Path(source).exists()
     assert pipeline.fetch_revision.call_count == 2
     assert pipeline.verify_checkout.call_count == 2
+    assert pipeline.verify_database_service.call_count == 2
     assert pipeline.verify_source.call_args_list == [call(REVISION), call(REVISION)]
     pipeline.deploy.assert_called_once_with(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
     calls = pipeline.mock_calls
     assert calls.index(call.export_source(REVISION, source)) < calls.index(call.build_and_test(source, REVISION))
     assert calls.index(call.build_and_test(source, REVISION)) < calls.index(call.run(*GIT_MERGE))
+    database_checks = [index for index, step in enumerate(calls) if step == call.verify_database_service()]
+    assert database_checks[0] < calls.index(call.build_and_test(source, REVISION))
+    assert calls.index(call.build_and_test(source, REVISION)) < database_checks[1] < calls.index(call.run(*GIT_MERGE))
     assert calls.index(call.run(*GIT_MERGE)) < calls.index(call.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE))
 
 
@@ -118,6 +122,70 @@ def test_skips_rebuilding_running_revision(pipeline):
     pipeline.build_and_test.assert_not_called()
     pipeline.run.assert_not_called()
     pipeline.deploy.assert_not_called()
+
+
+@pytest.mark.parametrize("check", [1, 2], ids=["before tests", "before rollout"])
+def test_unavailable_database_stops_update_before_changing_production(pipeline, check):
+    error = update.DeploymentError("Databastjänsten db är inte igång och frisk.")
+    pipeline.verify_database_service.side_effect = [None] * (check - 1) + [error]
+
+    with pytest.raises(update.DeploymentError, match="Databastjänsten db"):
+        update.update()
+
+    if check == 1:
+        pipeline.export_source.assert_not_called()
+        pipeline.build_and_test.assert_not_called()
+    else:
+        pipeline.build_and_test.assert_called_once()
+    assert call.run(*GIT_MERGE) not in pipeline.mock_calls
+    pipeline.deploy.assert_not_called()
+
+
+@pytest.mark.parametrize("containers", ["", "db-one\ndb-two"])
+def test_database_service_requires_exactly_one_existing_container(monkeypatch, containers):
+    commands = Mock(return_value=containers)
+    monkeypatch.setattr(update, "run", commands)
+
+    with pytest.raises(update.DeploymentError, match="Exakt en befintlig Compose-container för db"):
+        update.verify_database_service()
+
+    commands.assert_called_once_with(*update.COMPOSE, "ps", "--all", "--quiet", "db", capture=True)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"Status": "exited", "ExitCode": 0},
+        {"Status": "restarting", "Health": {"Status": "unhealthy"}},
+        {"Status": "running", "Health": {"Status": "starting"}},
+        {"Status": "running", "Health": {"Status": "unhealthy"}},
+        {"Status": "running"},
+        {"Status": "running", "Paused": True, "Health": {"Status": "healthy"}},
+    ],
+    ids=["stopped", "restarting", "starting", "unhealthy", "no healthcheck", "paused"],
+)
+def test_database_service_rejects_unavailable_database_without_starting_it(monkeypatch, state):
+    commands = Mock(side_effect=["db-container", json.dumps(state)])
+    monkeypatch.setattr(update, "run", commands)
+
+    with pytest.raises(update.DeploymentError, match="start --wait --wait-timeout 120 db"):
+        update.verify_database_service()
+
+    assert commands.call_args_list == [
+        call(*update.COMPOSE, "ps", "--all", "--quiet", "db", capture=True),
+        call("docker", "inspect", "--format", "{{json .State}}", "db-container", capture=True),
+    ]
+
+
+def test_database_service_accepts_running_healthy_database(monkeypatch):
+    commands = Mock(side_effect=["db-container", json.dumps({
+        "Status": "running", "Paused": False, "Health": {"Status": "healthy"},
+    })])
+    monkeypatch.setattr(update, "run", commands)
+
+    update.verify_database_service()
+
+    assert commands.call_count == 2
 
 
 def test_dev_mode_warns_and_resolves_web_image(monkeypatch, capsys):

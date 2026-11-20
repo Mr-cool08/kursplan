@@ -171,6 +171,21 @@ def image_revision(image):
     )
 
 
+def verify_database_service():
+    containers = run(*COMPOSE, "ps", "--all", "--quiet", "db", capture=True).splitlines()
+    if len(containers) != 1:
+        raise DeploymentError("Exakt en befintlig Compose-container för db krävs. Kontrollera docker compose ps --all db.")
+    state = json.loads(run("docker", "inspect", "--format", "{{json .State}}", containers[0], capture=True))
+    health = (state.get("Health") or {}).get("Status", "saknas")
+    if state.get("Status") != "running" or state.get("Paused") or health != "healthy":
+        raise DeploymentError(
+            f"Databastjänsten db är inte igång och frisk (status: {state.get('Status', 'saknas')}, "
+            f"pausad: {bool(state.get('Paused'))}, hälsa: {health}). Webbcontainern ändras inte. "
+            "Kontrollera databasloggen. Starta vid behov den befintliga databasen med: "
+            "docker compose --env-file .env -f docker-compose.yml start --wait --wait-timeout 120 db"
+        )
+
+
 def verify_database():
     try:
         run(*COMPOSE, "exec", "-T", "web", "python", "-c", DATABASE_PROBE, capture=True)
@@ -206,6 +221,7 @@ def update():
     compose_image = production_web_image()
     if compose_image == f"kursplan:{revision}":
         raise DeploymentError("Compose-tjänstens image måste ha ett eget namn för driftsättning.")
+    verify_database_service()
     previous_image = running_web_image()
 
     if image_revision(previous_image) == revision:
@@ -225,6 +241,7 @@ def update():
     verify_source(revision)
     if production_web_image(warn_dev_mode=False) != compose_image or running_web_image() != previous_image:
         raise DeploymentError("Produktionsstacken ändrades under testningen. Kör update.py igen.")
+    verify_database_service()
     run("git", "merge", "--ff-only", "--no-overwrite-ignore", revision)
     print("Tester godkända. Uppdaterar webbcontainern.", flush=True)
     deploy(tested_image, compose_image, previous_image)

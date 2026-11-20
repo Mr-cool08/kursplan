@@ -237,6 +237,19 @@ Skriptet avbryter uppdateringen när den filen skiljer sig. Säkerhetskopiera
 databasen före schemaändringar och hantera eventuell återställning av en
 databasmigration separat.
 
+Databastjänsten `db` måste redan vara igång och ha hälsostatus `healthy`.
+`update.py` kontrollerar detta före bygg/test och igen innan webbcontainern
+uppdateras. Om databasen är stoppad eller inte är frisk avbryts uppdateringen
+med ett tydligt fel. Skriptet startar eller återskapar inte databastjänsten.
+Kontrollera databasloggen och starta vid behov den befintliga containern med:
+
+```sh
+docker compose --env-file .env -f docker-compose.yml start --wait --wait-timeout 120 db
+```
+
+Det återanvänder den befintliga containern och dess datavolym. Kör sedan
+`python3 update.py` igen för att genomföra uppdateringen.
+
 Servern behöver Linux, Git, Docker och Docker Compose med stöd för `up --wait`.
 Använd Python 3.11.4 eller nyare, eller en distributionsversion som har
 `tarfile.data_filter` via en säkerhetsuppdatering. Kör på `main` i den befintliga
