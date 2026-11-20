@@ -212,6 +212,7 @@ def test_failed_pytest_cleans_only_its_isolated_resources(tmp_path, monkeypatch)
     run.assert_any_call("docker", "network", "create", "--internal", network)
     test_runs = [args for args, _ in run.call_args_list if args[:2] == ("docker", "run")]
     assert len(test_runs) == 2
+    assert test_runs[-1][-6:] == (test_image, "python", "-m", "pytest", "-n", "auto")
     for args in test_runs:
         assert args[args.index("--network") + 1] == network
         assert not {"-p", "--publish", "-v", "--volume", "--mount"}.intersection(args)

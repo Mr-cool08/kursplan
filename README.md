@@ -176,10 +176,18 @@ och lösenordet från `db_password` i `.env` (standardvärdet är `password`).
 ```sh
 python -m pip install -r requirements-test.txt
 python -m playwright install chromium
-python -m pytest
+python -m pytest -n auto
 ```
 
-Efter installationen startar pytest en tillfällig PostgreSQL 18-instans automatiskt. Det behövs varken Docker, en `.env`-fil eller en redan körande databas. Varje test får en egen tom databas, som tas bort efter testet. När testkörningen är klar stoppas instansen och dess data tas bort. Kör som vanlig användare.
+`pytest-xdist` ingår i beroendena. Med `-n auto` körs testerna parallellt och
+antalet testprocesser väljs automatiskt. Du kan även köra `pytest -n auto` i
+den aktiverade virtuella miljön. Utelämna `-n auto` för att köra sekventiellt.
+
+Efter installationen startar pytest en tillfällig PostgreSQL 18-instans per
+testprocess automatiskt. Det behövs varken Docker, en `.env`-fil eller en redan
+körande databas. Varje test får en egen tom databas, som tas bort efter testet.
+När testkörningen är klar stoppas instanserna och deras data tas bort. Kör som
+vanlig användare.
 
 Chromium används av webbläsartesterna. I CI installeras den automatiskt med
 Playwright innan pytest körs.
@@ -214,9 +222,9 @@ python3 update.py
 
 Skriptet hämtar senaste `origin/main` och kontrollerar att de spårade filerna
 är rena och att `main` kan uppdateras med en fast-forward. Det bygger webbimagen
-och kör tester med avstängd e-post, ett tillfälligt privat Docker-nätverk och
-en egen PostgreSQL-databas. Om ett test misslyckas kör den befintliga
-webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet
+och kör tester parallellt med `pytest -n auto`, avstängd e-post, ett tillfälligt
+privat Docker-nätverk och en egen PostgreSQL-databas. Om ett test misslyckas kör
+den befintliga webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet
 databasanslutningen och avslutar.
 
 Efter godkända tester flyttar skriptet fram `main`, driftsätter den testade

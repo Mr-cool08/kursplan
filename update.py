@@ -134,8 +134,11 @@ def build_and_test(source, revision):
             "--health-cmd", "pg_isready -h 127.0.0.1 -U postgres -d postgres", "postgres:18",
         )
         wait_for_test_container(db)
-        print("Kör pytest med tillfällig PostgreSQL, SQLite och Chromium.", flush=True)
-        run("docker", "run", "--rm", "--init", "--shm-size", "1g", "--name", runner, *isolated, test_image)
+        print("Kör pytest -n auto med tillfällig PostgreSQL, SQLite och Chromium.", flush=True)
+        run(
+            "docker", "run", "--rm", "--init", "--shm-size", "1g", "--name", runner, *isolated,
+            test_image, "python", "-m", "pytest", "-n", "auto",
+        )
         print("Provar den byggda webbimagen på det isolerade nätverket.", flush=True)
         run(
             "docker", "run", "--detach", "--name", web, *isolated, "--network-alias", "kursplan", *health_flags,
