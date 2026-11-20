@@ -1,8 +1,11 @@
 import os
 import json
-from smtplib import SMTP
+import ssl
+from smtplib import SMTP, SMTPException
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
+from urllib.parse import urlencode
 
 
 def _environment_value(name):
@@ -56,3 +59,67 @@ def send_booked_mail(email, booking_date, ort, booking_id, utbildning):
             smtp.sendmail(send_mail, email, message.as_string())
 
         return True
+
+
+def send_proposal_mail(booking, proposal, booking_url):
+    """Send a proposal, never a confirmation; report delivery truthfully."""
+    if os.environ.get("send_mail", "1").strip() == "0":
+        return "disabled"
+    sender = _environment_value("smtp_email")
+    server = _environment_value("smtp_server_address")
+    password = _environment_value("smtp_password")
+    try:
+        port = int(_environment_value("smtp_port") or "")
+    except ValueError:
+        return "failed"
+    if not sender or not server or not password or not 1 <= port <= 65535:
+        return "failed"
+    recipient = booking["email"]
+    if any("\r" in value or "\n" in value for value in (sender, recipient)):
+        return "failed"
+    choices = (
+        ("Acceptera förslaget", "accept"),
+        ("Begär nytt datum", "new_date"),
+        ("Avbryt bokningen", "cancel"),
+    )
+    links = [(label, booking_url + "?" + urlencode({"proposal_id": proposal["id"], "action": action}))
+             for label, action in choices]
+    details = (
+        ("Bokningsnummer", f"#{booking['id']}"),
+        ("Utbildning", booking["utbildning"]),
+        ("Antal deltagare", str(booking["antal"])),
+        ("Föreslaget datum", proposal["proposed_date"]),
+        ("Föreslagen ort", proposal["proposed_city"]),
+        ("Föreslagen lokal", proposal["proposed_venue"]),
+    )
+    introduction = "Du har fått ett datumförslag för din utbildning. Logga in på Kursplan.se och svara på förslaget."
+    explanation = "Bokningen blir bekräftad först när du har accepterat förslaget. Länkarna öppnar bokningen; du bekräftar ditt val efter inloggning."
+    plain = introduction + "\n\n" + "\n".join(f"{label}: {value}" for label, value in details)
+    plain += "\n\n" + explanation + "\n\n" + "\n\n".join(f"{label}:\n{link}" for label, link in links)
+    plain += "\n\nMed vänliga hälsningar,\nKursplan.se"
+    html = "<!doctype html><html lang='sv'><body>" + f"<h1>Datumförslag för bokning #{booking['id']}</h1><p>{escape(introduction)}</p><dl>"
+    html += "".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in details)
+    html += f"</dl><p>{escape(explanation)}</p>"
+    html += "".join(f'<p><a href="{escape(link, quote=True)}">{escape(label)}</a></p>' for label, link in links)
+    html += "<p>Med vänliga hälsningar,<br>Kursplan.se</p></body></html>"
+    message = MIMEMultipart("alternative")
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = f"Datumförslag för bokning #{booking['id']} – Kursplan.se"
+    message.attach(MIMEText(plain, "plain", "utf-8"))
+    message.attach(MIMEText(html, "html", "utf-8"))
+    accepted_by_server = False
+    try:
+        with SMTP(server, port, timeout=20) as smtp:
+            # SMTP protocol debugging can expose credentials and personal data.
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.login(sender, password)
+            refused = smtp.sendmail(sender, recipient, message.as_string())
+            if refused:
+                return "failed"
+            accepted_by_server = True
+    except (OSError, SMTPException):
+        # No exception details: server responses may contain personal data.
+        # A failed QUIT cannot undo accepted DATA; retrying would duplicate mail.
+        return "sent" if accepted_by_server else "failed"
+    return "sent"

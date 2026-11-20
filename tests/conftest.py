@@ -131,9 +131,12 @@ def user(db_path):
 
 @pytest.fixture
 def logged_in_client(client, user):
+    client.get("/login")
+    with client.session_transaction() as state:
+        csrf_token = state["booking_csrf_token"]
     response = client.post(
         "/login",
-        data={"email": USER_EMAIL, "password": USER_PASSWORD},
+        data={"email": USER_EMAIL, "password": USER_PASSWORD, "csrf_token": csrf_token},
     )
     assert response.status_code == 302
     assert response.location.endswith("/dashboard")

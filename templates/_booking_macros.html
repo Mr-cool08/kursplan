@@ -1,0 +1,22 @@
+{% macro status_pill(status, labels) -%}
+<span class="status-pill {{ status }}">{{ labels.get(status, 'Okänd status') }}</span>
+{%- endmacro %}
+
+{% macro requested_date(booking) -%}
+  {%- if booking.datumtyp == 'intervall' and booking.onskat_startdatum and booking.onskat_slutdatum -%}
+    {{ booking.onskat_startdatum }} – {{ booking.onskat_slutdatum }}
+  {%- elif booking.onskat_datum -%}
+    {{ booking.onskat_datum }}
+  {%- elif booking.status == 'pending' and booking.datum -%}
+    {{ booking.datum }}
+  {%- else -%}
+    Inte dokumenterat
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro messages(error=none) -%}
+  {% if error %}<div class="workflow-message error" role="alert">{{ error }}</div>{% endif %}
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+  <div class="workflow-message {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>
+  {% endfor %}
+{%- endmacro %}

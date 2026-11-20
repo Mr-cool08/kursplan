@@ -1,73 +1,66 @@
 {% extends "base.html" %}
+{% from '_booking_macros.html' import status_pill, requested_date, messages %}
 {% block title %}Dina bokningar{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
 {% endblock %}
 
 {% block content %}
-<main class="user-dashboard">
+<main class="user-dashboard workflow-page">
   <div class="dashboard-container">
     <header class="dashboard-header">
       <div>
         <p class="dashboard-kicker">Välkommen</p>
         <h1>{{ name }}</h1>
-        <p class="dashboard-intro">Här följer du dina utbildningsförfrågningar och bokningar.</p>
+        <p class="dashboard-intro">Här följer du dina utbildningsförfrågningar och svarar på datumförslag.</p>
       </div>
-      <a href="{{ url_for('user_page.booking') }}" class="dashboard-button primary">
-        <span aria-hidden="true">+</span>
-        Gör ny bokning
-      </a>
+      <a href="{{ url_for('user_page.booking') }}" class="dashboard-button primary"><span aria-hidden="true">+</span> Gör ny bokning</a>
     </header>
+
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ messages() }}
+    {% set waiting = bookings|selectattr('status', 'equalto', 'awaiting_response')|list if bookings else [] %}
+    {% if waiting %}
+    <div class="workflow-message attention" role="status">
+      <strong>{{ waiting|length }} datumförslag väntar på ditt svar.</strong>
+      Öppna bokningen för att acceptera, begära nytt datum eller avbryta.
+    </div>
+    {% endif %}
 
     <section class="dashboard-bookings" aria-labelledby="bookings-heading">
       <div class="bookings-heading">
         <h2 id="bookings-heading">Dina bokningar</h2>
-        {% if bookings %}
-        <span class="booking-count">{{ bookings|length }} {% if bookings|length == 1 %}bokning{% else %}bokningar{% endif %}</span>
-        {% endif %}
+        {% if bookings %}<span class="booking-count">{{ bookings|length }} {% if bookings|length == 1 %}bokning{% else %}bokningar{% endif %}</span>{% endif %}
       </div>
-
       {% if bookings %}
       <div class="booking-grid">
         {% for b in bookings %}
-        <article class="booking-card" aria-labelledby="booking-title-{{ b[0] }}">
+        <article class="booking-card{% if b.status == 'awaiting_response' %} needs-response{% endif %}" aria-labelledby="booking-title-{{ b.id }}">
           <div class="booking-card-topline">
-            <span class="booking-reference">Bokning #{{ b[0] }}</span>
-            {% if b[9] == 'pending' %}
-            <span class="status-pill pending">Väntar</span>
-            {% elif b[9] == 'accepted' %}
-            <span class="status-pill accepted">Accepterad</span>
-            {% else %}
-            <span class="status-pill cancelled">Avbruten</span>
-            {% endif %}
+            <span class="booking-reference">Bokning #{{ b.id }}</span>
+            {{ status_pill(b.status, status_labels) }}
           </div>
-          <h3 id="booking-title-{{ b[0] }}">{{ b[4] }}</h3>
+          <h3 id="booking-title-{{ b.id }}">{{ b.utbildning }}</h3>
+          {% if b.status == 'awaiting_response' %}<p class="response-prompt">Du har ett datumförslag att besvara.</p>{% endif %}
           <dl class="booking-details">
             <div class="booking-detail-wide">
-              <dt>Datum</dt>
-              <dd>{{ b[8] or 'Inte angivet' }}</dd>
+              <dt>{{ 'Fastställt datum' if b.faststallt_datum else 'Önskat datum' }}</dt>
+              <dd>{% if b.faststallt_datum %}{{ b.faststallt_datum }}{% else %}{{ requested_date(b) }}{% endif %}</dd>
             </div>
-            <div>
-              <dt>Antal deltagare</dt>
-              <dd>{{ b[5] }}</dd>
-            </div>
-            <div>
-              <dt>Ort</dt>
-              <dd>{{ b[6] or 'Inte angiven' }}</dd>
-            </div>
-            <div class="booking-detail-wide">
-              <dt>Lokal</dt>
-              <dd>{{ b[7] or 'Inte angiven' }}</dd>
-            </div>
+            <div><dt>Antal deltagare</dt><dd>{{ b.antal }}</dd></div>
+            <div><dt>Ort</dt><dd>{{ b.faststalld_ort or b.onskad_ort or b.ort or 'Inte angiven' }}</dd></div>
+            <div class="booking-detail-wide"><dt>Lokal</dt><dd>{{ b.faststalld_lokal or b.lokaladress or b.lokal or 'Inte angiven' }}</dd></div>
           </dl>
-          {% if b[9] == 'pending' %}
-          <div class="booking-card-actions">
-            <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b[0]) }}">
+          <div class="booking-card-actions workflow-actions">
+            <a class="dashboard-button {{ 'primary' if b.status == 'awaiting_response' else 'secondary' }}" href="{{ url_for('user_page.booking_detail', booking_id=b.id) }}">{{ 'Besvara datumförslag' if b.status == 'awaiting_response' else 'Visa bokning' }}<span class="visually-hidden"> #{{ b.id }}</span></a>
+            {% if b.status in customer_cancellable and b.status != 'awaiting_response' %}
+            <form method="post" action="{{ url_for('user_page.cancel_booking', booking_id=b.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="cancel-button" aria-describedby="booking-title-{{ b[0] }}">Avbryt</button>
+              <button type="submit" class="cancel-button" aria-describedby="booking-title-{{ b.id }}">Avbryt</button>
             </form>
+            {% endif %}
           </div>
-          {% endif %}
         </article>
         {% endfor %}
       </div>
@@ -79,10 +72,7 @@
       </div>
       {% endif %}
     </section>
-
-    <div class="dashboard-actions">
-      <a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a>
-    </div>
+    <div class="dashboard-actions"><a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a></div>
   </div>
 </main>
 {% endblock %}

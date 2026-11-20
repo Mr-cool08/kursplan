@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from '_booking_macros.html' import messages %}
+{% block title %}Granska datumförslag · Bokning #{{ booking.id }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
+{% endblock %}
+{% block content %}
+<main class="user-dashboard workflow-page booking-workflow">
+  <div class="dashboard-container">
+    <a class="back-link" href="{{ url_for('admin_page.booking_detail', booking_id=booking.id) }}">&larr; Tillbaka till bokningen</a>
+    <header class="dashboard-header"><div><p class="dashboard-kicker">Bokning #{{ booking.id }}</p><h1>Granska datumförslaget</h1><p class="dashboard-intro">Kontrollera uppgifterna innan förslaget skickas till kunden.</p></div></header>
+    {{ messages(error) }}
+    <section class="workflow-section current-proposal" aria-labelledby="summary-heading">
+      <h2 id="summary-heading">{{ booking.utbildning }}</h2>
+      <dl class="workflow-facts">
+        <div><dt>Kund</dt><dd>{{ booking.name }}</dd></div>
+        <div><dt>Antal deltagare</dt><dd>{{ booking.antal }}</dd></div>
+        <div class="fact-wide"><dt>Mottagare</dt><dd>{{ booking.email }}</dd></div>
+        <div><dt>Föreslaget datum</dt><dd>{{ proposal_values.proposed_date }}</dd></div>
+        <div><dt>Föreslagen ort</dt><dd>{{ proposal_values.proposed_city }}</dd></div>
+        <div class="fact-wide"><dt>Föreslagen lokal</dt><dd>{{ proposal_values.proposed_venue }}</dd></div>
+      </dl>
+      <p>Bokningen kommer att få status <strong>Inväntar kundens svar</strong>. Kunden behöver logga in och godkänna förslaget innan utbildningen är bekräftad.</p>
+      <form class="workflow-form compact-form" method="post" action="{{ url_for('admin_page.send_proposal', booking_id=booking.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="confirmation_token" value="{{ confirmation_token }}">
+        <input type="hidden" name="confirmed" value="1">
+        <input type="hidden" name="proposed_date" value="{{ proposal_values.proposed_date }}">
+        <input type="hidden" name="proposed_city" value="{{ proposal_values.proposed_city }}">
+        <input type="hidden" name="proposed_venue" value="{{ proposal_values.proposed_venue }}">
+        <div class="workflow-actions"><button type="submit" class="dashboard-button primary">Skicka datumförslaget</button><a class="dashboard-button secondary" href="{{ url_for('admin_page.booking_detail', booking_id=booking.id) }}">Tillbaka och ändra</a></div>
+      </form>
+    </section>
+  </div>
+</main>
+{% endblock %}

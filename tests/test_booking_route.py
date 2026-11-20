@@ -316,8 +316,11 @@ def test_customer_cannot_cancel_another_customers_or_an_accepted_booking(
 ):
     assert logged_in_client.post("/booking", data=valid_booking_data).status_code == 302
     own_booking_id = database.get_all_bookings(db_path)[0][0]
-    database.book_bookings(
-        [own_booking_id], "2027-04-01", "Göteborg", db_path
+    proposal = database.create_proposal(
+        own_booking_id, "2027-04-01", "Göteborg", "Sal 1", db_path
+    )
+    assert database.respond_to_proposal(
+        own_booking_id, proposal["id"], "route-user@example.com", "accept", db_path
     )
     other_booking_id = database.create_booking_request(
         name="Other Customer",
@@ -344,13 +347,15 @@ def test_customer_cannot_cancel_another_customers_or_an_accepted_booking(
         f"/cancel_booking/{own_booking_id}", data={"csrf_token": refreshed_token}
     )
 
+    # This legacy endpoint returns to the overview with a generic failure
+    # message, without disclosing whether another customer's id exists.
     assert other_response.status_code == 302
     assert accepted_response.status_code == 302
     assert database.get_booking_details_by_id(other_booking_id, db_path)["status"] == "pending"
     assert database.get_booking_details_by_id(own_booking_id, db_path)["status"] == "accepted"
 
 
-def test_admin_sends_confirmation_only_for_selected_pending_bookings(
+def test_legacy_admin_bulk_booking_cannot_accept_requests_or_send_confirmation(
     logged_in_client,
     valid_booking_data,
     db_path,
@@ -372,8 +377,11 @@ def test_admin_sends_confirmation_only_for_selected_pending_bookings(
         lokalansvar="sakerhetsutbildarna",
         db_path=db_path,
     )
-    database.book_bookings(
-        [already_accepted_id], "2027-05-01", "Malmö", db_path
+    proposal = database.create_proposal(
+        already_accepted_id, "2027-05-01", "Malmö", "Sal 1", db_path
+    )
+    assert database.respond_to_proposal(
+        already_accepted_id, proposal["id"], "accepted@example.com", "accept", db_path
     )
     logged_in_client.get("/logout")
     database.create_user(
@@ -384,12 +392,13 @@ def test_admin_sends_confirmation_only_for_selected_pending_bookings(
         "admin",
         db_path,
     )
+    login_token = csrf_from_html(logged_in_client.get("/login").get_data(as_text=True))
     logged_in_client.post(
         "/login",
-        data={"email": "mail-admin@example.com", "password": "mail-admin-password"},
+        data={"email": "mail-admin@example.com", "password": "mail-admin-password", "csrf_token": login_token},
     )
-    dashboard = logged_in_client.get("/admin/")
-    token = csrf_from_html(dashboard.get_data(as_text=True))
+    detail = logged_in_client.get(f"/admin/bookings/{pending_id}")
+    token = csrf_from_html(detail.get_data(as_text=True))
     sent_for = []
 
     def record_mail(email, booking_date, ort, booking_id, utbildning):
@@ -407,15 +416,15 @@ def test_admin_sends_confirmation_only_for_selected_pending_bookings(
         },
     )
 
-    assert response.status_code == 302
-    assert sent_for == [pending_id]
-    assert database.get_booking_details_by_id(pending_id, db_path)["status"] == "accepted"
+    assert response.status_code == 400
+    assert sent_for == []
+    assert database.get_booking_details_by_id(pending_id, db_path)["status"] == "pending"
     accepted = database.get_booking_details_by_id(already_accepted_id, db_path)
     assert accepted["faststallt_datum"] == "2027-05-01"
     assert accepted["faststalld_ort"] == "Malmö"
 
 
-def test_admin_confirmation_preserves_original_request(
+def test_customer_acceptance_preserves_original_request(
     logged_in_client, valid_booking_data, db_path, csrf_from_html
 ):
     data = _with_changes(
@@ -438,27 +447,46 @@ def test_admin_confirmation_preserves_original_request(
         "admin",
         db_path,
     )
+    login_token = csrf_from_html(logged_in_client.get("/login").get_data(as_text=True))
     login = logged_in_client.post(
         "/login",
         data={
             "email": "route-admin@example.com",
             "password": "route-admin-password",
+            "csrf_token": login_token,
         },
     )
     assert login.status_code == 302
-    admin_dashboard = logged_in_client.get("/admin/")
-    assert admin_dashboard.status_code == 200
-    admin_csrf_token = csrf_from_html(admin_dashboard.get_data(as_text=True))
-    response = logged_in_client.post(
-        "/admin/bookings",
+    detail = logged_in_client.get(f"/admin/bookings/{booking_id}")
+    assert detail.status_code == 200
+    admin_csrf_token = csrf_from_html(detail.get_data(as_text=True))
+    preview = logged_in_client.post(
+        f"/admin/bookings/{booking_id}/proposal/preview",
         data={
             "csrf_token": admin_csrf_token,
-            "booking_ids": str(booking_id),
-            "date": "2027-09-15",
-            "ort": "Uppsala",
+            "proposed_date": "2027-09-15",
+            "proposed_city": "Uppsala",
+            "proposed_venue": "Sal 2",
         },
     )
+    assert preview.status_code == 200
+    parser = _FormStateParser()
+    parser.feed(preview.get_data(as_text=True))
+    fields = {item["name"]: item.get("value", "") for item in parser.inputs if "name" in item}
+    response = logged_in_client.post(f"/admin/bookings/{booking_id}/proposal", data=fields)
 
+    assert response.status_code == 302
+    assert database.get_booking_details_by_id(booking_id, db_path)["status"] == "awaiting_response"
+    logged_in_client.get("/logout")
+    login_token = csrf_from_html(logged_in_client.get("/login").get_data(as_text=True))
+    logged_in_client.post("/login", data={
+        "email": "route-user@example.com", "password": "route-user-password", "csrf_token": login_token,
+    })
+    customer_token = csrf_from_html(logged_in_client.get(f"/bookings/{booking_id}").get_data(as_text=True))
+    proposal = database.get_booking_proposals(booking_id, db_path)[-1]
+    response = logged_in_client.post(f"/bookings/{booking_id}/proposals/{proposal['id']}/respond", data={
+        "csrf_token": customer_token, "action": "accept",
+    })
     assert response.status_code == 302
     details = database.get_booking_details_by_id(booking_id, db_path)
     assert details["status"] == "accepted"

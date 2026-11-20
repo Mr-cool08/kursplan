@@ -19,6 +19,12 @@ def add_booking(db_path, *, name=NAME, email=EMAIL, course="Första hjälpen"):
     )
 
 
+def accept_booking(db_path, booking_id, *, email=EMAIL, day=DATE, city="Göteborg"):
+    proposal = database.create_proposal(booking_id, day, city, "Sal 2", db_path)
+    assert proposal
+    assert database.respond_to_proposal(booking_id, proposal["id"], email, "accept", db_path)
+
+
 def test_generate_secret_key():
     key = database.generate_secret_key()
 
@@ -188,6 +194,7 @@ def test_create_booking_request_persists_structured_wishes(
         "lokaladress": "Storgatan 1",
         "faststallt_datum": None,
         "faststalld_ort": None,
+        "faststalld_lokal": None,
     }
     legacy = database.get_booking_by_id(booking_id, db_path)
     assert len(legacy) == 10
@@ -267,7 +274,7 @@ def test_booking_queries_filter_by_email_name_and_status(db_path):
     first = add_booking(db_path)
     same_email = add_booking(db_path, name="Another name")
     same_name = add_booking(db_path, email="other@example.com")
-    database.update_status(first, "cancelled", db_path)
+    database.cancel_booking_for_email(first, EMAIL, db_path)
 
     assert {row[0] for row in database.get_bookings_by_email(EMAIL, db_path)} == {
         first, same_email
@@ -281,14 +288,14 @@ def test_booking_queries_filter_by_email_name_and_status(db_path):
     assert [row[0] for row in database.get_bookings_by_status("cancelled", db_path)] == [first]
 
 
-def test_cancel_booking_only_changes_pending_status(db_path):
+def test_customer_cancel_only_changes_unconfirmed_status(db_path):
     pending = add_booking(db_path)
     accepted = add_booking(db_path)
-    database.update_status(accepted, "accepted", db_path)
+    accept_booking(db_path, accepted)
 
-    assert database.cancel_booking(pending, db_path) == 1
-    assert database.cancel_booking(pending, db_path) == 0
-    assert database.cancel_booking(accepted, db_path) == 0
+    assert database.cancel_booking_for_email(pending, EMAIL, db_path) == 1
+    assert database.cancel_booking_for_email(pending, EMAIL, db_path) == 0
+    assert database.cancel_booking_for_email(accepted, EMAIL, db_path) == 0
     assert database.get_booking_by_id(pending, db_path)[-1] == "cancelled"
     assert database.get_booking_by_id(accepted, db_path)[-1] == "accepted"
 
@@ -314,37 +321,24 @@ def test_get_all_bookings_sorts_by_course_case_insensitively_then_id(db_path):
     ]
 
 
-def test_book_bookings_updates_only_selected_pending_bookings(db_path):
+def test_legacy_bulk_acceptance_is_rejected_without_changing_any_booking(db_path):
     first = add_booking(db_path)
     second = add_booking(db_path)
     unselected = add_booking(db_path)
     cancelled = add_booking(db_path)
     accepted = add_booking(db_path)
-    database.update_status(cancelled, "cancelled", db_path)
-    database.update_status(accepted, "accepted", db_path)
+    database.cancel_booking_for_email(cancelled, EMAIL, db_path)
+    accept_booking(db_path, accepted)
     ids = [first, second, unselected, cancelled, accepted]
     before = {booking_id: database.get_booking_by_id(booking_id, db_path) for booking_id in ids}
 
     new_date, new_city = "2027-01-15", "Malmö"
-    updated = database.book_bookings(
-        [first, second, cancelled, accepted], new_date, new_city, db_path
-    )
-
-    assert set(updated) == {first, second}
-
-    for booking_id in (first, second):
-        original = before[booking_id]
-        assert database.get_booking_by_id(booking_id, db_path) == (
-            *original[:6], new_city, original[7], new_date, "accepted"
+    with pytest.raises(ValueError):
+        database.book_bookings(
+            [first, second, cancelled, accepted], new_date, new_city, db_path
         )
-        details = database.get_booking_details_by_id(booking_id, db_path)
-        assert details["ort"] == "Göteborg"
-        assert details["datum"] == DATE
-        assert details["onskad_ort"] == "Göteborg"
-        assert details["onskat_datum"] == DATE
-        assert details["faststalld_ort"] == new_city
-        assert details["faststallt_datum"] == new_date
-    for booking_id in (unselected, cancelled, accepted):
+
+    for booking_id in ids:
         assert database.get_booking_by_id(booking_id, db_path) == before[booking_id]
 
 
@@ -394,6 +388,7 @@ NEW_BOOKING_COLUMNS = [
     "lokaladress",
     "faststallt_datum",
     "faststalld_ort",
+    "faststalld_lokal",
 ]
 
 
@@ -411,7 +406,10 @@ def _assert_legacy_migration(db_path, pending_id, accepted_id):
     accepted = database.get_booking_details_by_id(accepted_id, db_path)
     assert accepted["datum"] == "2027-05-01"
     assert accepted["ort"] == "Lund"
-    for column in NEW_BOOKING_COLUMNS:
+    assert accepted["faststallt_datum"] == "2027-05-01"
+    assert accepted["faststalld_ort"] == "Lund"
+    assert accepted["faststalld_lokal"] == "Sal"
+    for column in NEW_BOOKING_COLUMNS[:-3]:
         assert accepted[column] is None
 
     for booking_id in (pending_id, accepted_id):
@@ -422,6 +420,7 @@ def _assert_legacy_migration(db_path, pending_id, accepted_id):
 
 def test_migrates_legacy_postgresql_schema_idempotently(db_path):
     with psycopg.connect(db_path) as connection:
+        connection.execute("DROP TABLE booking_proposals, booking_history")
         connection.execute("DROP TABLE bookings")
         connection.execute(
             LEGACY_BOOKINGS_SCHEMA.format(

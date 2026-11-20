@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% from '_booking_macros.html' import status_pill, requested_date, messages %}
+{% block title %}Bokning #{{ booking.id }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='style/user_dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style/workflow.css') }}">
+{% endblock %}
+
+{% block content %}
+<main class="user-dashboard workflow-page booking-workflow">
+  <div class="dashboard-container">
+    <a class="back-link" href="{{ url_for('admin_page.dashboard' if is_admin else 'user_page.dashboard') }}">&larr; Till bokningsöversikten</a>
+    <header class="dashboard-header">
+      <div><p class="dashboard-kicker">Bokning #{{ booking.id }}</p><h1>{{ booking.utbildning }}</h1><p class="dashboard-intro">{{ booking.antal }} deltagare{% if is_admin %} · {{ booking.name }}{% endif %}</p></div>
+      {{ status_pill(booking.status, status_labels) }}
+    </header>
+    {{ messages(error) }}
+    {% if stale_proposal|default(false) %}<div class="workflow-message warning" role="status">Länken gäller ett tidigare datumförslag som inte längre kan besvaras. Här visas bokningens aktuella uppgifter.</div>{% endif %}
+    {% if booking.status == 'accepted' %}<div class="workflow-message success" role="status">Utbildningen är bekräftad.</div>{% endif %}
+    {% if booking.status == 'rescheduled' %}<div class="workflow-message information" role="status">Bokningen är markerad som ombokad av administratören. De senast fastställda uppgifterna visas nedan.</div>{% endif %}
+    {% if booking.status == 'completed' %}<div class="workflow-message success" role="status">Utbildningen är slutförd. Bokningen och dess historik finns kvar här.</div>{% endif %}
+    {% if booking.status == 'cancelled' %}<div class="workflow-message warning" role="status">Bokningen är avbruten. Tidigare datumförslag kan inte längre accepteras.</div>{% endif %}
+
+    {% if active_proposal and booking.status == 'awaiting_response' %}
+    <section class="workflow-section current-proposal" aria-labelledby="current-proposal-heading">
+      <p class="dashboard-kicker">{{ 'Inväntar kundens svar' if is_admin else 'Ditt svar behövs' }}</p>
+      <h2 id="current-proposal-heading">Aktuellt datumförslag</h2>
+      <dl class="workflow-facts">
+        <div><dt>Föreslaget datum</dt><dd>{{ active_proposal.proposed_date }}</dd></div>
+        <div><dt>Föreslagen ort</dt><dd>{{ active_proposal.proposed_city }}</dd></div>
+        <div class="fact-wide"><dt>Föreslagen lokal</dt><dd>{{ active_proposal.proposed_venue }}</dd></div>
+      </dl>
+      {% if is_admin %}
+        {% if active_proposal.delivery_status == 'sent' %}<p class="workflow-muted">E-post skickad {{ active_proposal.sent_at }}.</p>
+        {% elif active_proposal.delivery_status == 'sending' %}<p class="workflow-muted" role="status">E-postutskicket pågår. Förslaget kan redan besvaras i kundportalen.</p>
+        {% elif active_proposal.delivery_status == 'disabled' %}<p class="workflow-muted">E-post är avstängd i denna miljö. Förslaget är tillgängligt i kundportalen.</p>
+        {% else %}<p class="delivery-warning">E-postmeddelandet har inte skickats. Förslaget kan besvaras i kundportalen.</p>{% endif %}
+        {% if active_proposal.delivery_status in ['failed', 'disabled', 'pending'] %}
+        <form class="workflow-form compact-form" method="post" action="{{ url_for('admin_page.retry_delivery', booking_id=booking.id, proposal_id=active_proposal.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="dashboard-button secondary" type="submit">Försök skicka e-post igen</button>
+        </form>
+        {% endif %}
+      {% else %}
+      <p>Datumet blir fastställt när du accepterar förslaget. Kontrollera datum, ort och lokal innan du svarar.</p>
+      {% if selected_action in ['accept', 'new_date', 'cancel'] %}<p class="selected-response" role="status">Du valde <strong>{{ {'accept': 'Acceptera förslaget', 'new_date': 'Begär nytt datum', 'cancel': 'Avbryt bokningen'}[selected_action] }}</strong> i länken. Bekräfta ditt val nedan.</p>{% endif %}
+      <form class="workflow-form response-form" method="post" action="{{ url_for('user_page.respond_proposal', booking_id=booking.id, proposal_id=active_proposal.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="workflow-actions">
+          <button class="dashboard-button primary" name="action" value="accept" type="submit">Acceptera förslaget</button>
+          <button class="dashboard-button secondary" name="action" value="new_date" type="submit">Begär nytt datum</button>
+          <button class="cancel-button" name="action" value="cancel" type="submit">Avbryt bokningen</button>
+        </div>
+      </form>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if booking.faststallt_datum %}
+    <section class="workflow-section" aria-labelledby="confirmed-heading">
+      <h2 id="confirmed-heading">{{ 'Senast fastställda uppgifter' if booking.status in ['cancelled', 'rescheduled'] else 'Fastställda bokningsuppgifter' }}</h2>
+      <dl class="workflow-facts">
+        <div><dt>Utbildningsdatum</dt><dd>{{ booking.faststallt_datum }}</dd></div>
+        <div><dt>Ort</dt><dd>{{ booking.faststalld_ort or 'Inte angiven' }}</dd></div>
+        <div class="fact-wide"><dt>Lokal</dt><dd>{{ booking.faststalld_lokal or booking.lokal or 'Inte angiven' }}</dd></div>
+      </dl>
+    </section>
+    {% endif %}
+
+    <section class="workflow-section" aria-labelledby="original-heading">
+      <h2 id="original-heading">Ursprunglig förfrågan</h2>
+      <dl class="workflow-facts">
+        <div><dt>Önskat datum{% if booking.datumtyp == 'intervall' %}intervall{% endif %}</dt><dd>{{ requested_date(booking) }}</dd></div>
+        <div><dt>Antal deltagare</dt><dd>{{ booking.antal }}</dd></div>
+        <div><dt>Önskad ort</dt><dd>{{ booking.onskad_ort or ('Inte dokumenterad' if booking.datumtyp is none else 'Inte angiven') }}</dd></div>
+        <div><dt>Lokalansvar</dt><dd>{{ 'Kunden ordnar lokalen' if booking.lokalansvar == 'kund' else 'Säkerhetsutbildarna ordnar lokalen' if booking.lokalansvar == 'sakerhetsutbildarna' else 'Inte dokumenterat' }}</dd></div>
+        <div class="fact-wide"><dt>{{ 'Kundens lokaladress' if booking.lokalansvar == 'kund' else 'Ursprunglig lokaluppgift' }}</dt><dd>{{ booking.lokaladress or booking.lokal or 'Inte angiven' }}</dd></div>
+        {% if is_admin %}
+        <div><dt>Kund</dt><dd>{{ booking.name }}</dd></div>
+        <div><dt>Företagets organisationsnummer</dt><dd>{{ booking.organization_number }}</dd></div>
+        <div class="fact-wide"><dt>E-postadress</dt><dd><a href="mailto:{{ booking.email }}">{{ booking.email }}</a></dd></div>
+        {% endif %}
+      </dl>
+    </section>
+
+    {% if is_admin and booking.status in ['pending', 'registered', 'new_date_requested'] %}
+    <section class="workflow-section" aria-labelledby="new-proposal-heading">
+      <h2 id="new-proposal-heading">Skicka datumförslag</h2>
+      <p>Uppgifterna är förifyllda från tidigare förslag eller kundens önskemål. Kunden måste godkänna förslaget även om uppgifterna är oförändrade.</p>
+      <form class="workflow-form" method="post" action="{{ url_for('admin_page.preview_proposal', booking_id=booking.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-field"><label for="proposed-date">Utbildningsdatum</label><input type="date" id="proposed-date" name="proposed_date" value="{{ proposal_values.proposed_date }}" required></div>
+        <div class="form-field"><label for="proposed-city">Utbildningsort</label><input type="text" id="proposed-city" name="proposed_city" value="{{ proposal_values.proposed_city }}" maxlength="200" required></div>
+        <div class="form-field"><label for="proposed-venue">Utbildningslokal och adress</label><textarea id="proposed-venue" name="proposed_venue" rows="3" maxlength="1000" required>{{ proposal_values.proposed_venue }}</textarea></div>
+        <button type="submit" class="dashboard-button primary">Granska förslaget</button>
+      </form>
+    </section>
+    {% endif %}
+
+    {% if is_admin and admin_targets %}
+    <section class="workflow-section" aria-labelledby="admin-actions-heading">
+      <h2 id="admin-actions-heading">Ändra status</h2>
+      {% if booking.status == 'pending' %}<p>Registrering är frivillig och visar att förfrågan har uppmärksammats. Datumförslag kan skickas direkt.</p>{% endif %}
+      {% if booking.status == 'accepted' %}<p>Ombokad ändrar endast status. Datum och lokal behålls och inget nytt förslag eller e-postmeddelande skickas.</p>{% endif %}
+      <form class="workflow-form compact-form" method="post" action="{{ url_for('admin_page.change_status', booking_id=booking.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="workflow-actions">{% for target in admin_targets %}<button name="target" value="{{ target }}" type="submit" class="{{ 'cancel-button' if target == 'cancelled' else 'dashboard-button secondary' }}">Markera som {{ status_labels[target]|lower }}</button>{% endfor %}</div>
+      </form>
+    </section>
+    {% endif %}
+
+    {% if not is_admin and booking.status in customer_cancellable and booking.status != 'awaiting_response' %}
+    <section class="workflow-section" aria-labelledby="cancel-heading">
+      <h2 id="cancel-heading">Avbryt förfrågan</h2>
+      <p>Om utbildningen inte längre är aktuell kan du avbryta förfrågan. Bokningen finns kvar i din historik.</p>
+      <form class="workflow-form compact-form" method="post" action="{{ url_for('user_page.cancel_booking', booking_id=booking.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="cancel-button" type="submit">Avbryt bokningen</button>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="workflow-section" aria-labelledby="proposals-heading">
+      <h2 id="proposals-heading">Tidigare datumförslag och kundsvar</h2>
+      {% set proposal_states = {'pending': 'Inväntar svar', 'accepted': 'Accepterat', 'declined': 'Nytt datum begärt', 'cancelled': 'Avaktiverat'} %}
+      {% if proposals %}
+      <ol class="proposal-history">
+        {% for proposal in proposals %}
+        <li>
+          <div class="history-heading"><strong>Förslag #{{ proposal.id }} · {{ proposal.proposed_date }}</strong><span>{{ proposal_states.get(proposal.state, proposal.state) }}</span></div>
+          <p>{{ proposal.proposed_city }} · {{ proposal.proposed_venue }}</p>
+          <p class="workflow-muted">Skapat {{ proposal.created_at }}{% if proposal.sent_at %} · E-post skickad {{ proposal.sent_at }}{% endif %}</p>
+          {% if proposal.responded_at %}<p class="workflow-muted">Kundens svar: {{ {'accept': 'Accepterat', 'new_date': 'Begär nytt datum', 'cancel': 'Avbryt bokningen'}.get(proposal.response, proposal.response or 'Avaktiverat') }} · {{ proposal.responded_at }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}<p class="workflow-muted">Inga datumförslag har skapats för denna bokning.</p>{% endif %}
+    </section>
+
+    <section class="workflow-section" aria-labelledby="history-heading">
+      <h2 id="history-heading">Bokningshistorik{% if is_admin %} och anteckningar{% endif %}</h2>
+      {% set actors = {'admin': 'Administratör', 'customer': 'Kund', 'system': 'System'} %}
+      {% if history %}
+      <ol class="booking-timeline">
+        {% for event in history %}
+        <li>
+          <p class="history-meta"><time>{{ event.created_at }}</time> · {{ actors.get(event.actor, event.actor) }}{% if event.is_private|default(false) %} · Intern anteckning{% endif %}</p>
+          {% if event.to_status and event.to_status != event.from_status %}<p><strong>{% if event.from_status %}{{ status_labels.get(event.from_status, event.from_status) }} &rarr; {% endif %}{{ status_labels.get(event.to_status, event.to_status) }}</strong></p>{% endif %}
+          {% if event.note %}<p class="history-note">{{ event.note }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}<p class="workflow-muted">Ingen ytterligare historik finns dokumenterad.</p>{% endif %}
+      {% if is_admin %}
+      <form class="workflow-form note-form" method="post" action="{{ url_for('admin_page.add_note', booking_id=booking.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-field"><label for="admin-note">Ny administrativ anteckning</label><p id="note-help" class="field-help">Anteckningen visas endast för administratörer.</p><textarea id="admin-note" name="note" rows="3" maxlength="4000" aria-describedby="note-help" required></textarea></div>
+        <button type="submit" class="dashboard-button secondary">Spara anteckning</button>
+      </form>
+      {% endif %}
+    </section>
+  </div>
+</main>
+{% endblock %}

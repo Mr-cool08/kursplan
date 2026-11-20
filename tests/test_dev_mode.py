@@ -52,8 +52,14 @@ def run_app(tmp_path):
             environment.pop(key, None)
         environment["PYTHONIOENCODING"] = "utf-8"
 
+        csrf_helper = dedent('''
+            def csrf(client, path):
+                client.get(path)
+                with client.session_transaction() as state:
+                    return state["booking_csrf_token"]
+        ''')
         result = subprocess.run(
-            [sys.executable, "-c", dedent(code)],
+            [sys.executable, "-c", csrf_helper + dedent(code)],
             cwd=tmp_path,
             env=environment,
             capture_output=True,
@@ -107,12 +113,14 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
             assert health.status_code == 200
             assert health.get_json() == {"status": "ok"}
             signup = user.post("/signup", data={
+                "csrf_token": csrf(user, "/signup"),
                 "name": "Test User", "email": "user@example.com",
                 "password": "test-user-password", "organization_number": "0123456789",
             })
             assert signup.status_code == 302
             user.get("/logout")
             login = user.post("/login", data={
+                "csrf_token": csrf(user, "/login"),
                 "email": "user@example.com", "password": "test-user-password",
             })
             assert login.location == "/dashboard"
@@ -180,16 +188,17 @@ def test_dev_mode_uses_temporary_database_and_debug_logging(run_app):
             assert legacy_login.status_code == 307
             assert legacy_login.location == "/login"
             login = admin.post("/login", data={
+                "csrf_token": csrf(admin, "/login"),
                 "email": "admin@example.com", "password": "test-admin-password",
             })
             assert login.location == "/admin/"
-            admin_dashboard = admin.get("/admin/")
-            parser = CsrfParser()
-            parser.feed(admin_dashboard.get_data(as_text=True))
-            assert parser.token
-            accepted = admin.post("/admin/bookings", data={
-                "csrf_token": parser.token,
-                "booking_ids": str(row[0]), "date": "2027-01-02", "ort": "Uppsala",
+            assert admin.get("/admin/").status_code == 200
+            proposal = database.create_proposal(
+                row[0], "2027-01-02", "Uppsala", "Sal 2", db_path,
+            )
+            assert database.get_booking_details_by_id(row[0], db_path)["status"] == "awaiting_response"
+            accepted = user.post(f"/bookings/{row[0]}/proposals/{proposal['id']}/respond", data={
+                "csrf_token": csrf(user, f"/bookings/{row[0]}"), "action": "accept",
             })
             assert accepted.status_code == 302
             (row,) = database.get_bookings_by_email("user@example.com", db_path)
@@ -253,11 +262,13 @@ def test_dev_mode_uses_configured_postgresql_database_and_preserves_data(run_app
         client = app.test_client()
         assert client.get("/health").get_json() == {"status": "ok"}
         login = client.post("/login", data={
+            "csrf_token": csrf(client, "/login"),
             "email": "existing@example.com", "password": "existing-password",
         })
         assert login.location == "/dashboard"
         assert client.get("/dashboard").status_code == 200
         assert client.post("/signup", data={
+            "csrf_token": csrf(client, "/signup"),
             "name": "New User", "email": "new@example.com",
             "password": "new-password", "organization_number": "0123456789",
         }).status_code == 302
@@ -427,7 +438,7 @@ def test_dev_mode_creates_two_usable_accounts_without_settings(run_app):
             )
             assert original_users[role][4] == role
             client = app.test_client()
-            response = client.post("/login", data=credentials)
+            response = client.post("/login", data={**credentials, "csrf_token": csrf(client, "/login")})
             assert response.location == location
             dashboard = client.get(location)
             assert dashboard.status_code == 200

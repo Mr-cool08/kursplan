@@ -1,7 +1,9 @@
 from datetime import date
 import re
+from urllib.parse import unquote, urlsplit
 
-from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
+from werkzeug.security import generate_password_hash
 from csrf import (
     clear_booking_csrf_token,
     get_booking_csrf_token,
@@ -56,13 +58,71 @@ def _current_database_role():
     if not user_id:
         return None
 
-    role = database.get_user_role(user_id, current_app.config["DB_PATH"])
-    if role not in VALID_ROLES:
+    user = database.get_user_identity(user_id, current_app.config["DB_PATH"])
+    if user is None or user["role"] not in VALID_ROLES:
         session.clear()
         return None
 
+    role = user["role"]
+    session.update(user_name=user["name"], user_email=user["email"],
+                   organization_number=user["organization_number"])
     session["role"] = role
     return role
+
+
+def _safe_next(value):
+    """Only resume local booking pages; reject external and ambiguous URLs."""
+    if not value or len(value) > 2000:
+        return None
+    decoded = unquote(value)
+    if any(ord(char) < 32 for char in decoded) or "\\" in decoded:
+        return None
+    if not decoded.startswith("/") or decoded.startswith("//"):
+        return None
+    try:
+        parsed = urlsplit(decoded)
+    except ValueError:
+        return None
+    if parsed.scheme or parsed.netloc:
+        return None
+    if not re.fullmatch(r"/bookings/[1-9][0-9]*", parsed.path):
+        return None
+    return value
+
+
+def _booking_login_redirect():
+    return redirect(url_for("user_page.login", next=request.full_path.rstrip("?")))
+
+
+def _check_csrf():
+    if not validate_booking_csrf_token(request.form.get("csrf_token", "")):
+        abort(400, description="Formuläret kunde inte verifieras. Ladda om sidan och försök igen.")
+
+
+def booking_detail_context(booking, *, is_admin=False, proposal_values=None):
+    db_path = current_app.config["DB_PATH"]
+    proposals = database.get_booking_proposals(booking["id"], db_path)
+    latest = proposals[-1] if proposals else None
+    # Proposal history is ordered oldest first by the data layer.
+    active = next((p for p in reversed(proposals) if p["state"] == "pending"), None)
+    requested_proposal_id = request.args.get("proposal_id", type=int)
+    stale_proposal = requested_proposal_id is not None and (active is None or active["id"] != requested_proposal_id)
+    defaults = {
+        "proposed_date": (latest or {}).get("proposed_date") or booking.get("onskat_datum") or "",
+        "proposed_city": (latest or {}).get("proposed_city") or booking.get("onskad_ort") or booking.get("ort") or "",
+        "proposed_venue": (latest or {}).get("proposed_venue") or booking.get("lokaladress") or (booking.get("lokal") if not booking.get("lokalansvar") else "") or "",
+    }
+    return dict(
+        booking=booking, proposals=proposals,
+        history=database.get_booking_history(booking["id"], db_path, include_private=is_admin),
+        is_admin=is_admin, csrf_token=get_booking_csrf_token(),
+        status_labels=database.BOOKING_STATUSES,
+        customer_cancellable=database.CUSTOMER_CANCELLABLE,
+        admin_targets=sorted(database.ADMIN_TRANSITIONS.get(booking["status"], set())),
+        active_proposal=active, proposal_values=proposal_values or defaults,
+        selected_action=request.args.get("action") if not stale_proposal and request.args.get("action") in {"accept", "new_date", "cancel"} else None,
+        selected_proposal_id=requested_proposal_id, stale_proposal=stale_proposal,
+    )
 
 
 def _booking_values(form=None):
@@ -172,7 +232,7 @@ def _validate_booking_form(form, utbildningar):
         antal = int(antal_value) if re.fullmatch(r"[0-9]+", antal_value or "") else 0
     except ValueError:
         antal = 0
-    if antal < 1:
+    if antal < 1 or antal > 2147483647:
         errors["antal"] = "Antal deltagare måste vara ett heltal från 1."
     else:
         normalized["antal"] = antal
@@ -199,7 +259,7 @@ def index():
 
 @user_page.route('/dashboard')
 def dashboard():
-    if 'user_id' not in session:
+    if _current_database_role() is None:
         return redirect(url_for('user_page.login'))
     name = session.get('user_name')
     email = session.get('user_email')
@@ -207,7 +267,7 @@ def dashboard():
     if not email:
         session.clear()
         return redirect(url_for('user_page.login'))
-    bookings = database.get_bookings_by_email(email, current_app.config["DB_PATH"])
+    bookings = database.list_booking_details(current_app.config["DB_PATH"], email=email)
 
     return render_template(
         'dashboard.html',
@@ -215,20 +275,25 @@ def dashboard():
         organization_number=organization_number,
         bookings=bookings,
         csrf_token=get_booking_csrf_token(),
+        status_labels=database.BOOKING_STATUSES,
+        customer_cancellable=database.CUSTOMER_CANCELLABLE,
     )
 
 @user_page.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
+        _check_csrf()
         db_path = current_app.config["DB_PATH"]
-        name = request.form['name']
-        email = request.form['email']
-        password = request.form['password']
-        organization_number = request.form['organization_number']
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        organization_number = request.form.get('organization_number', '').strip()
+        if not name or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or not password or not organization_number:
+            return render_template('signup.html', error='Fyll i namn, giltig e-postadress, lösenord och organisationsnummer.', csrf_token=get_booking_csrf_token()), 400
         if database.check_user_exists(email, db_path):
-            return render_template('signup.html', error='A user with this email already exists.')
+            return render_template('signup.html', error='Det finns redan ett konto med denna e-postadress.', csrf_token=get_booking_csrf_token()), 400
         role = "user"
-        user = database.create_user(name, email, password, organization_number, role, db_path)
+        user = database.create_user(name, email, generate_password_hash(password), organization_number, role, db_path)
         session.clear()
         session['user_id'] = user[0]
         session['user_name'] = user[1]
@@ -237,19 +302,23 @@ def signup():
         session['role'] = role
         return redirect(url_for('user_page.login'))
     else:
-        return render_template('signup.html')
+        return render_template('signup.html', csrf_token=get_booking_csrf_token())
     
     
 @user_page.route('/login', methods=['GET', 'POST'])
 def login():
+    next_url = _safe_next(request.form.get("next") if request.method == "POST" else request.args.get("next"))
     if request.method == 'GET':
         if role := _current_database_role():
+            if next_url:
+                return redirect(next_url)
             return _dashboard_redirect(role)
     elif request.method == 'POST':
+        _check_csrf()
         email = request.form.get('email', '').strip()
         password = request.form.get('password', '')
         if not email or not password:
-            return render_template('login.html', error='Ange både e-postadress och lösenord.')
+            return render_template('login.html', error='Ange både e-postadress och lösenord.', next_url=next_url, csrf_token=get_booking_csrf_token())
 
         user = database.authenticate_user(email, password, current_app.config["DB_PATH"])
         if user and user[4] in VALID_ROLES:
@@ -262,15 +331,15 @@ def login():
                 user_email=user_email,
                 role=role,
             )
-            return _dashboard_redirect(role)
+            return redirect(next_url) if next_url else _dashboard_redirect(role)
 
-        return render_template('login.html', error='Felaktig e-postadress eller lösenord.')
-    return render_template('login.html')
+        return render_template('login.html', error='Felaktig e-postadress eller lösenord.', next_url=next_url, csrf_token=get_booking_csrf_token())
+    return render_template('login.html', next_url=next_url, csrf_token=get_booking_csrf_token())
 
 
 @user_page.route('/booking', methods=['GET', 'POST'])
 def booking():
-    if 'user_id' not in session:
+    if _current_database_role() is None:
         return redirect(url_for('user_page.login'))
 
     utbildningar = read_utbildningar_from_json()
@@ -327,13 +396,58 @@ def cancel_booking(booking_id):
         return "Formuläret kunde inte verifieras. Ladda om sidan och försök igen.", 400
 
     db_path = current_app.config["DB_PATH"]
-    if role == "admin":
-        database.cancel_booking(booking_id, db_path)
-        clear_booking_csrf_token()
-        return redirect(url_for('admin_page.dashboard'))
-
     email = session.get("user_email")
-    if email:
-        database.cancel_booking_for_email(booking_id, email, db_path)
+    # The database transition checks both ownership and the allowed state.
+    changed = database.transition_booking(
+        booking_id, "cancelled", db_path,
+        actor="admin" if role == "admin" else "customer",
+        email=email, actor_id=session["user_id"],
+    )
     clear_booking_csrf_token()
+    if not changed:
+        flash("Bokningen kunde inte avbrytas. Kontrollera aktuell status och behörighet.", "error")
+    if role == "admin":
+        return redirect(url_for('admin_page.dashboard'))
     return redirect(url_for('user_page.dashboard'))
+
+
+@user_page.route('/bookings/<int:booking_id>', methods=['GET'])
+def booking_detail(booking_id):
+    role = _current_database_role()
+    if role is None:
+        return _booking_login_redirect()
+    booking = database.get_booking_details_by_id(booking_id, current_app.config["DB_PATH"])
+    if not booking or booking["email"] != session.get("user_email"):
+        abort(404)
+    return render_template("booking_detail.html", **booking_detail_context(booking))
+
+
+@user_page.route('/bookings/<int:booking_id>/proposals/<int:proposal_id>/respond', methods=['POST'])
+def respond_proposal(booking_id, proposal_id):
+    if _current_database_role() is None:
+        return redirect(url_for("user_page.login", next=url_for("user_page.booking_detail", booking_id=booking_id)))
+    _check_csrf()
+    db_path = current_app.config["DB_PATH"]
+    booking = database.get_booking_details_by_id(booking_id, db_path)
+    if not booking or booking["email"] != session.get("user_email"):
+        abort(404)
+    action = request.form.get("action", "")
+    if action not in {"accept", "new_date", "cancel"}:
+        abort(400, description="Välj ett giltigt svar på förslaget.")
+    changed = database.respond_to_proposal(
+        booking_id, proposal_id, session["user_email"], action, db_path,
+        actor_id=session["user_id"],
+    )
+    if not changed:
+        return render_template(
+            "booking_detail.html", error="Förslaget är inte längre aktuellt. Läs bokningens senaste uppgifter innan du svarar.",
+            **booking_detail_context(database.get_booking_details_by_id(booking_id, db_path)),
+        ), 409
+    clear_booking_csrf_token()
+    messages = {
+        "accept": "Du har accepterat förslaget. Utbildningen är nu bekräftad.",
+        "new_date": "Du har begärt ett nytt datumförslag. Vi återkommer med ett nytt förslag.",
+        "cancel": "Bokningen är avbruten. Bokningen och historiken finns kvar på ditt konto.",
+    }
+    flash(messages[action], "success")
+    return redirect(url_for("user_page.booking_detail", booking_id=booking_id))

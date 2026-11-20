@@ -31,21 +31,35 @@ def dashboard_client(project_root, monkeypatch):
         session.clear()
         return redirect(url_for("user_page.index"))
 
+    def booking(booking_id, course, participants, city, venue, day, status):
+        return dict(id=booking_id, name="Testkund", email=CUSTOMER_EMAIL,
+                    organization_number="5566778899", utbildning=course, antal=participants,
+                    ort=city, lokal=venue, datum=day, status=status,
+                    datumtyp="intervall" if " – " in day else "exakt",
+                    onskat_datum=day if " – " not in day else None,
+                    onskat_startdatum="2027-03-18" if " – " in day else None,
+                    onskat_slutdatum="2027-03-22" if " – " in day else None,
+                    onskad_ort=city, lokaladress=venue,
+                    faststallt_datum=day if status == "accepted" else None,
+                    faststalld_ort=city if status == "accepted" else None,
+                    faststalld_lokal=venue if status == "accepted" else None)
+
     bookings = [
-        (11, "Testkund", CUSTOMER_EMAIL, "5566778899", COURSE, 12, None,
-         ADDRESS, DATE_RANGE, "pending"),
-        (12, "Testkund", CUSTOMER_EMAIL, "5566778899", "Bekräftad HLR", 5,
-         "Uppsala", "Säkerhetsutbildarna ordnar lokalen", "2027-04-15", "accepted"),
-        (13, "Testkund", CUSTOMER_EMAIL, "5566778899", "Avbokad kurs", 3,
-         "Göteborg", "Testgatan 1", "2027-05-01", "cancelled"),
+        booking(11, COURSE, 12, None, ADDRESS, DATE_RANGE, "pending"),
+        booking(12, "Bekräftad HLR", 5, "Uppsala", "Säkerhetsutbildarna ordnar lokalen", "2027-04-15", "accepted"),
+        booking(13, "Avbokad kurs", 3, "Göteborg", "Testgatan 1", "2027-05-01", "cancelled"),
     ]
 
-    def get_bookings(email, db_path):
+    def get_bookings(db_path, email=None, status=None):
         assert email == CUSTOMER_EMAIL
         assert db_path == "unused"
-        return bookings or None
+        return bookings
 
-    monkeypatch.setattr(database, "get_bookings_by_email", get_bookings)
+    monkeypatch.setattr(database, "list_booking_details", get_bookings)
+    monkeypatch.setattr(database, "get_user_identity", lambda *args: {
+        "id": 1, "name": "Anna " + "Långtefternamn" * 12, "email": CUSTOMER_EMAIL,
+        "organization_number": "5566778899", "role": "user",
+    })
     monkeypatch.setenv("send_mail", "0")
     client = app.test_client()
     with client.session_transaction() as state:
@@ -111,11 +125,11 @@ def test_dashboard_cards_preserve_fields_status_and_csrf(dashboard_client):
     assert len(parser.forms) == 1
     assert parser.forms[0]["method"].lower() == "post"
     assert parser.forms[0]["action"] == "/cancel_booking/11"
-    assert len(parser.csrf_tokens) == 1 and parser.csrf_tokens[0]
+    assert len(parser.csrf_tokens) >= 1 and parser.csrf_tokens[0]
     with client.session_transaction() as state:
         assert parser.csrf_tokens[0] in state.values()
     for text in (DATE_RANGE, ADDRESS, "Uppsala", "2027-04-15", "Inte angiven",
-                 "Väntar", "Accepterad", "Avbruten", "Säkerhetsutbildarna ordnar lokalen"):
+                 "Ny förfrågan", "Accepterad", "Avbruten", "Säkerhetsutbildarna ordnar lokalen"):
         assert text in html
     assert "säkerhetsutbildning &amp; riskbedömning" in html
     assert '<table' not in html
@@ -133,7 +147,7 @@ def test_dashboard_cards_fit_mobile_and_desktop(page, dashboard_client, width):
     expect(pending.get_by_text(ADDRESS, exact=True)).to_be_visible()
     expect(pending.get_by_text("Inte angiven", exact=True)).to_be_visible()
     expect(pending.locator(".booking-details dt")).to_have_text(
-        ["Datum", "Antal deltagare", "Ort", "Lokal"]
+        ["Önskat datum", "Antal deltagare", "Ort", "Lokal"]
     )
     expect(pending.locator(".booking-details dd")).to_have_text(
         [DATE_RANGE, "12", "Inte angiven", ADDRESS]
@@ -172,9 +186,9 @@ def test_dashboard_cards_fit_mobile_and_desktop(page, dashboard_client, width):
 
     controls[0].focus()
     page.keyboard.press("Tab")
-    expect(controls[1]).to_be_focused()
+    expect(pending.get_by_role("link", name="Visa bokning")).to_be_focused()
     page.keyboard.press("Tab")
-    expect(controls[2]).to_be_focused()
+    expect(controls[1]).to_be_focused()
     assert page.evaluate(
         "document.querySelector('footer').getBoundingClientRect().top >= "
         "document.querySelector('main').getBoundingClientRect().bottom - 1"

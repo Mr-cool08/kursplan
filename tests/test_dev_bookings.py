@@ -124,10 +124,13 @@ def test_restarting_does_not_reset_changes_or_recreate_deleted_examples(
 ):
     database.ensure_dev_bookings(USER_EMAIL, booking_db_path)
     pending = database.get_bookings_by_status("pending", booking_db_path)
-    assert database.cancel_booking(pending[0][0], booking_db_path) == 1
-    assert database.book_bookings(
-        [pending[1][0]], "2030-06-15", "Ändrad ort", booking_db_path,
-    ) == [pending[1][0]]
+    assert database.cancel_booking_for_email(pending[0][0], USER_EMAIL, booking_db_path) == 1
+    proposal = database.create_proposal(
+        pending[1][0], "2030-06-15", "Ändrad ort", "Ändrad lokal", booking_db_path,
+    )
+    assert database.respond_to_proposal(
+        pending[1][0], proposal["id"], USER_EMAIL, "accept", booking_db_path,
+    )
     changed = _details(booking_db_path)
 
     assert database.ensure_dev_bookings(USER_EMAIL, booking_db_path) == []

@@ -56,9 +56,9 @@ Nya förfrågningar lagrar kundens uppgifter strukturerat:
 - `utbildningskalla` skiljer katalogval från fritext.
 - `onskad_ort`, `lokalansvar` och `lokaladress` håller önskad ort och lokalval
   åtskilda.
-- När en administratör bekräftar en förfrågan skrivs datum och ort till
-  `faststallt_datum` och `faststalld_ort`. Kundens ursprungliga önskemål ändras
-  inte.
+- När kunden accepterar ett datumförslag skrivs datum, ort och lokal till
+  `faststallt_datum`, `faststalld_ort` och `faststalld_lokal`. Kundens ursprungliga
+  önskemål ändras inte. Administratören kan inte acceptera åt kunden.
 
 De äldre kolumnerna och det befintliga 10-fältskontraktet bevaras för gamla
 läsare. Vid migration fylls strukturerat exakt datum och önskad ort i för äldre
@@ -67,7 +67,78 @@ bokade eller avbrutna rader lämnas nya önskemålsfält tomma eftersom det inte
 att säkert avgöra om deras äldre datum och ort redan har ändrats. Deras befintliga
 värden behålls oförändrade. `utbildningskalla`, `lokalansvar`, `lokaladress` och
 de fastställda fälten lämnas `NULL` för äldre rader när betydelsen inte kan
-härledas utan antaganden.
+härledas utan antaganden. Äldre accepterade bokningar behåller sin bekräftade
+status; deras redan sparade datum, ort och lokal fylls i som fastställda uppgifter
+utan att ett nytt kundgodkännande eller ett historiskt datumförslag konstrueras.
+
+## Bokningsflöde med datumförslag
+
+En ny förfrågan får ett bokningsnummer och status **Ny förfrågan** (`pending`).
+Administratören kan frivilligt markera den som **Registrerad** (`registered`)
+eller direkt öppna bokningen och förbereda ett datumförslag. Datum, ort och lokal
+förifylls när de finns i kundens önskemål eller tidigare förslag. Förslaget
+valideras och visas i en sammanfattning innan administratören skickar det.
+
+Bokningen får då status **Inväntar kundens svar** (`awaiting_response`). Kunden
+ser förslaget i portalen och får, om e-post är aktiverad, ett meddelande med tre
+alternativ. Länkarna leder till bokningen via inloggning. Att öppna en länk ändrar
+aldrig bokningen: kunden bekräftar sitt svar i ett CSRF-skyddat formulär.
+
+- **Acceptera förslaget** fastställer uppgifterna och ger status **Accepterad**
+  (`accepted`). Endast kunden som äger bokningen kan godkänna förslaget.
+- **Begär nytt datum** ger status **Nytt datum önskas** (`new_date_requested`).
+  Det tidigare förslaget avböjs och bevaras. Administratören kan sedan skicka fler
+  förslag inom samma bokningsnummer. Gamla förslag kan aldrig accepteras.
+- **Avbryt bokningen** ger status **Avbruten** (`cancelled`) och avaktiverar
+  utestående förslag. Kunden kan också avbryta före ett förslag och när ett nytt
+  datum har begärts.
+
+Efter kundens godkännande kan administratören markera bokningen som **Slutförd**
+(`completed`), **Ombokad** (`rescheduled`) eller **Avbruten**. Ombokad ändrar endast
+status: inga datum eller lokaler ändras, inga mejl skickas och inget nytt
+godkännande begärs. En ombokad bokning kan därefter slutföras eller avbrytas.
+Administratören kan även avbryta en bokning som inväntar kundens svar. Övriga
+statusövergångar avvisas på servern.
+
+Administratörsöversikten har filter för samtliga statusar och prioriterar nya
+förfrågningar och önskemål om nytt datum. Detaljvyerna skiljer på ursprungliga
+önskemål, aktuellt förslag och fastställda uppgifter. Administrativa anteckningar
+är interna och visas inte i kundportalen.
+
+### Migration och historik
+
+`create_database()` lägger till `faststalld_lokal` och tabellerna
+`booking_proposals` och `booking_history` med tillhörande index. Migrationen körs
+vid appstart och kan upprepas i både PostgreSQL och SQLite. Bokningsnummer,
+statusvärden, konton och befintliga uppgifter behålls. Varje äldre bokning får en
+enda baslinjehändelse som tydligt anger att historiken börjar vid migreringen;
+tidigare händelser eller kundsvar återskapas inte i efterhand.
+
+Varje nytt förslag har eget ID, föreslagna uppgifter, tillstånd, skapandetid,
+eventuell utskickstid och kundens svarstid. Förslagen skrivs inte över.
+Statusändringar sparar tid, aktör och anteckning i samma transaktion som
+ändringen. Bokningslås och ett unikt index för utestående förslag skyddar mot
+konkurrerande svar och dubbla formuläranrop.
+
+### E-post och leveransstatus
+
+Datumförslag använder samma `smtp_email`, `smtp_password`,
+`smtp_server_address` och `smtp_port` som tidigare, med STARTTLS. Länkarna använder
+den fasta adressen `https://kursplan.se` och påverkas inte av HTTP-anropets
+Host-header. `send_mail=0` stänger av utskick; detta visas uttryckligen i
+administratörsvyn och räknas inte som skickad e-post.
+
+Förslaget sparas först och kan besvaras i kundportalen även om SMTP misslyckas.
+Ett misslyckat utskick markeras som misslyckat och kan försökas igen i
+bokningsdetaljen utan att ett nytt datumförslag skapas. Endast ett samtidigt
+anrop får försöka skicka ett visst förslag. SMTP-uppgifter och felinnehåll skrivs
+inte till loggen. Testerna använder avstängd e-post eller mockad SMTP.
+
+Om processen avbryts mitt under ett SMTP-anrop kan leveransstatus bli kvar som
+**Utskick pågår**. Kontrollera då leveransen hos e-postleverantören före ett
+manuellt nytt försök; automatisk omsändning skulle kunna ge dubbletter. SMTP och
+databastransaktionen kan inte tillsammans garantera exakt ett mottaget mejl.
+Ingen produktionsdatabas eller driftsättning ändras när testerna körs.
 
 ## Ge en användare administratörsbehörighet
 

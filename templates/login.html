@@ -9,6 +9,8 @@
 {% block content %}
 <h1>Logga in</h1>
 <form method="POST" action="{{ url_for('user_page.login') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next_url or '' }}">
     {% if error %}
         <p class="error">{{ error }}</p>
     {% endif %}

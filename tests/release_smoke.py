@@ -2,6 +2,7 @@
 
 import json
 import os
+from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPCookieProcessor, build_opener
@@ -27,9 +28,22 @@ def smoke_test(base_url="http://kursplan:8000"):
     with client.open(f"{base_url}/admin/", timeout=10) as response:
         assert urlsplit(response.url).path == "/login"
 
-    credentials = urlencode(
-        {"email": os.environ["test_email"], "password": os.environ["test_password"]}
-    ).encode("utf-8")
+    class TokenParser(HTMLParser):
+        token = None
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            if tag == "input" and attributes.get("name") == "csrf_token":
+                self.token = attributes.get("value")
+
+    with client.open(f"{base_url}/login", timeout=10) as response:
+        parser = TokenParser()
+        parser.feed(response.read().decode("utf-8"))
+        assert parser.token, "Inloggningsformuläret saknar CSRF-skydd."
+    credentials = urlencode({
+        "email": os.environ["test_email"], "password": os.environ["test_password"],
+        "csrf_token": parser.token,
+    }).encode("utf-8")
     with client.open(f"{base_url}/login", data=credentials, timeout=10) as response:
         assert urlsplit(response.url).path == "/admin/", "Inloggningen misslyckades."
         assert "Bokningar" in response.read().decode("utf-8")

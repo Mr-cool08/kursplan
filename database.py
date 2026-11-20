@@ -1,11 +1,32 @@
 from contextlib import closing, contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import secrets
 import sqlite3
 
 import psycopg
 from werkzeug.security import check_password_hash, generate_password_hash
+
+
+BOOKING_STATUSES = {
+    "pending": "Ny förfrågan",
+    "registered": "Registrerad",
+    "awaiting_response": "Inväntar kundens svar",
+    "new_date_requested": "Nytt datum önskas",
+    "accepted": "Accepterad",
+    "rescheduled": "Ombokad",
+    "completed": "Slutförd",
+    "cancelled": "Avbruten",
+}
+CUSTOMER_CANCELLABLE = frozenset({
+    "pending", "registered", "awaiting_response", "new_date_requested",
+})
+ADMIN_TRANSITIONS = {
+    "pending": frozenset({"registered"}),
+    "awaiting_response": frozenset({"cancelled"}),
+    "accepted": frozenset({"completed", "rescheduled", "cancelled"}),
+    "rescheduled": frozenset({"completed", "cancelled"}),
+}
 
 
 _LEGACY_BOOKING_SELECT = """
@@ -16,7 +37,7 @@ _LEGACY_BOOKING_SELECT = """
     utbildning,
     antal,
     COALESCE(faststalld_ort, onskad_ort, ort) AS ort,
-    lokal,
+    COALESCE(faststalld_lokal, lokal) AS lokal,
     COALESCE(faststallt_datum, datum) AS datum,
     status
 """
@@ -42,6 +63,7 @@ _BOOKING_DETAIL_COLUMNS = (
     "lokaladress",
     "faststallt_datum",
     "faststalld_ort",
+    "faststalld_lokal",
 )
 
 _BOOKING_MIGRATION_COLUMNS = _BOOKING_DETAIL_COLUMNS[10:]
@@ -52,11 +74,13 @@ def _cursor(db_path):
     # A Path selects the local SQLite file. Production passes a PostgreSQL DSN.
     if isinstance(db_path, Path):
         with (
-            closing(sqlite3.connect(db_path, autocommit=False)) as conn,
-            conn,
-            closing(conn.cursor()) as cursor,
+            closing(sqlite3.connect(db_path, autocommit=True, timeout=15)) as conn,
         ):
-            yield cursor
+            # Foreign keys must be enabled before opening the transaction.
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.autocommit = False
+            with conn, closing(conn.cursor()) as cursor:
+                yield cursor
     else:
         with psycopg.connect(db_path) as conn, conn.cursor() as cursor:
             yield cursor
@@ -80,7 +104,18 @@ def _insert_booking(cursor, columns, values):
         f"VALUES ({placeholders}) RETURNING id",
         values,
     )
-    return cursor.fetchone()[0]
+    booking_id = cursor.fetchone()[0]
+    fields = dict(zip(columns, values))
+    status = fields.get("status", "pending")
+    _execute(cursor, "SELECT id FROM users WHERE email = %s", (fields.get("email"),))
+    user = cursor.fetchone()
+    _record_history(
+        cursor, booking_id, None, status,
+        "customer" if status == "pending" else "system",
+        "Bokningsförfrågan skapad." if status == "pending" else "Bokning skapad.",
+        user[0] if user and status == "pending" else None,
+    )
+    return booking_id
 
 
 def create_booking(
@@ -225,32 +260,20 @@ def create_user(name, email, password, organization_number, role, db_path):
 
 
 def update_status(booking_id, status, db_path):
-    with _cursor(db_path) as cursor:
-        _execute(cursor, "UPDATE bookings SET status = %s WHERE id = %s", (status, booking_id))
+    """Compatibility entry point; never bypass the defined admin transitions."""
+    return transition_booking(booking_id, status, db_path)
 
 
 def cancel_booking(booking_id, db_path):
-    """Cancel one pending booking and return the number of changed rows."""
-    with _cursor(db_path) as cursor:
-        _execute(
-            cursor,
-            "UPDATE bookings SET status = 'cancelled' "
-            "WHERE id = %s AND status = 'pending'",
-            (booking_id,),
-        )
-        return cursor.rowcount
+    """Compatibility entry point for the allowed administrator cancellation."""
+    return int(transition_booking(booking_id, "cancelled", db_path))
 
 
 def cancel_booking_for_email(booking_id, email, db_path):
-    """Cancel a customer's pending booking without trusting its public id alone."""
-    with _cursor(db_path) as cursor:
-        _execute(
-            cursor,
-            "UPDATE bookings SET status = 'cancelled' "
-            "WHERE id = %s AND email = %s AND status = 'pending'",
-            (booking_id, email),
-        )
-        return cursor.rowcount
+    """Cancel only the owner's booking in a customer-cancellable state."""
+    return int(transition_booking(
+        booking_id, "cancelled", db_path, actor="customer", email=email,
+    ))
 
 
 def get_email_by_booking_id(booking_id, db_path):
@@ -261,26 +284,10 @@ def get_email_by_booking_id(booking_id, db_path):
 
 
 def book_bookings(booking_ids, booking_date, ort, db_path):
+    """Retired: only the customer's response may confirm a booking."""
     if not booking_ids:
         return []
-
-    query = (
-        "UPDATE bookings SET faststallt_datum = %s, faststalld_ort = %s, "
-        "status = 'accepted' WHERE status = 'pending'"
-    )
-    if isinstance(db_path, Path):
-        placeholders = ", ".join(["%s"] * len(booking_ids))
-        query += f" AND id IN ({placeholders})"
-        params = (booking_date, ort, *booking_ids)
-    else:
-        query += " AND id = ANY(%s)"
-        params = (booking_date, ort, booking_ids)
-
-    query += " RETURNING id"
-
-    with _cursor(db_path) as cursor:
-        _execute(cursor, query, params)
-        return [row[0] for row in cursor.fetchall()]
+    raise ValueError("Skicka ett datumförslag som kunden får godkänna.")
 
 
 def remove_booking(booking_id, db_path):
@@ -498,6 +505,15 @@ def get_user_role(user_id, db_path):
         return row[0] if row else None
 
 
+def get_user_identity(user_id, db_path):
+    """Read the current identity rather than authorizing a cached session email."""
+    with _cursor(db_path) as cursor:
+        _execute(cursor, "SELECT id, name, email, organization_number, role "
+                 "FROM users WHERE id = %s", (user_id,))
+        row = cursor.fetchone()
+        return dict(zip(("id", "name", "email", "organization_number", "role"), row)) if row else None
+
+
 def get_booking_by_name(name, db_path):
     with _cursor(db_path) as cursor:
         _execute(
@@ -521,6 +537,236 @@ def get_all_bookings(db_path):
             "ORDER BY lower(utbildning) ASC NULLS LAST, id ASC",
         )
         return cursor.fetchall()
+
+
+_PROPOSAL_COLUMNS = (
+    "id", "booking_id", "proposed_date", "proposed_city", "proposed_venue",
+    "state", "created_at", "sent_at", "responded_at", "response", "delivery_status",
+)
+_HISTORY_COLUMNS = (
+    "id", "booking_id", "from_status", "to_status", "actor", "actor_id",
+    "note", "created_at", "kind", "is_private",
+)
+_UNSET = object()
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _record_history(cursor, booking_id, from_status, to_status, actor, note,
+                    actor_id=None, *, kind="status", is_private=False):
+    _execute(
+        cursor,
+        "INSERT INTO booking_history (booking_id, from_status, to_status, actor, "
+        "actor_id, note, created_at, kind, is_private) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (booking_id, from_status, to_status, actor, actor_id, note, _now(), kind, int(is_private)),
+    )
+
+
+def list_booking_details(db_path, email=None, status=None):
+    """List named request/confirmed fields and the latest visible history event."""
+    columns = ", ".join(f"b.{name}" for name in _BOOKING_DETAIL_COLUMNS)
+    visibility = " AND h.is_private = 0" if email is not None else ""
+    query = (
+        f"SELECT {columns}, "
+        "(SELECT h.note FROM booking_history h WHERE h.booking_id = b.id"
+        f"{visibility} ORDER BY h.id DESC LIMIT 1), "
+        "(SELECT h.created_at FROM booking_history h WHERE h.booking_id = b.id"
+        f"{visibility} ORDER BY h.id DESC LIMIT 1) FROM bookings b WHERE 1 = 1"
+    )
+    params = []
+    if email is not None:
+        query += " AND b.email = %s"
+        params.append(email)
+    if status is not None:
+        query += " AND b.status = %s"
+        params.append(status)
+    query += (
+        " ORDER BY CASE b.status WHEN 'new_date_requested' THEN 0 "
+        "WHEN 'pending' THEN 1 WHEN 'registered' THEN 2 "
+        "WHEN 'awaiting_response' THEN 3 WHEN 'accepted' THEN 4 "
+        "WHEN 'rescheduled' THEN 5 ELSE 6 END, b.id DESC"
+    )
+    with _cursor(db_path) as cursor:
+        _execute(cursor, query, params)
+        return [dict(zip((*_BOOKING_DETAIL_COLUMNS, "latest_event", "latest_event_at"), row))
+                for row in cursor.fetchall()]
+
+
+def get_booking_proposals(booking_id, db_path):
+    with _cursor(db_path) as cursor:
+        _execute(cursor, f"SELECT {', '.join(_PROPOSAL_COLUMNS)} "
+                 "FROM booking_proposals WHERE booking_id = %s ORDER BY id ASC", (booking_id,))
+        return [dict(zip(_PROPOSAL_COLUMNS, row)) for row in cursor.fetchall()]
+
+
+def get_booking_history(booking_id, db_path, include_private=True):
+    query = f"SELECT {', '.join(_HISTORY_COLUMNS)} FROM booking_history WHERE booking_id = %s"
+    if not include_private:
+        query += " AND is_private = 0"
+    with _cursor(db_path) as cursor:
+        _execute(cursor, query + " ORDER BY id ASC", (booking_id,))
+        return [dict(zip(_HISTORY_COLUMNS, row)) for row in cursor.fetchall()]
+
+
+def _lock_booking(cursor, booking_id, email=None):
+    # Make the first statement a write. PostgreSQL takes a row lock and SQLite
+    # obtains its write reservation before any read snapshot is established.
+    query = "UPDATE bookings SET status = status WHERE id = %s"
+    params = (booking_id,)
+    if email is not None:
+        query += " AND email = %s"
+        params += (email,)
+    _execute(cursor, query + f" RETURNING {', '.join(_BOOKING_DETAIL_COLUMNS)}", params)
+    row = cursor.fetchone()
+    return dict(zip(_BOOKING_DETAIL_COLUMNS, row)) if row else None
+
+
+def create_proposal(booking_id, proposed_date, proposed_city, proposed_venue, db_path, actor_id=None,
+                    *, expected_status=None, expected_previous_proposal_id=_UNSET):
+    """Preserve a new proposal and move an eligible request to awaiting_response."""
+    try:
+        parsed = date.fromisoformat(proposed_date)
+    except (ValueError, TypeError):
+        raise ValueError("Ange ett giltigt datum.") from None
+    if parsed.isoformat() != proposed_date:
+        raise ValueError("Ange ett giltigt datum.")
+    if not isinstance(proposed_city, str) or not proposed_city.strip() or len(proposed_city) > 200:
+        raise ValueError("Ange en ort med högst 200 tecken.")
+    if not isinstance(proposed_venue, str) or not proposed_venue.strip() or len(proposed_venue) > 1000:
+        raise ValueError("Ange en lokal med högst 1 000 tecken.")
+    with _cursor(db_path) as cursor:
+        booking = _lock_booking(cursor, booking_id)
+        if not booking or booking["status"] not in {"pending", "registered", "new_date_requested"}:
+            return None
+        if expected_status is not None and booking["status"] != expected_status:
+            return None
+        if expected_previous_proposal_id is not _UNSET:
+            _execute(cursor, "SELECT id FROM booking_proposals WHERE booking_id = %s ORDER BY id DESC LIMIT 1", (booking_id,))
+            latest = cursor.fetchone()
+            if (latest[0] if latest else None) != expected_previous_proposal_id:
+                return None
+        _execute(cursor,
+                 "INSERT INTO booking_proposals (booking_id, proposed_date, proposed_city, "
+                 "proposed_venue, state, created_at, delivery_status) "
+                 "VALUES (%s, %s, %s, %s, 'pending', %s, 'pending') "
+                 f"RETURNING {', '.join(_PROPOSAL_COLUMNS)}",
+                 (booking_id, proposed_date, proposed_city.strip(), proposed_venue.strip(), _now()))
+        proposal = dict(zip(_PROPOSAL_COLUMNS, cursor.fetchone()))
+        _execute(cursor, "UPDATE bookings SET status = 'awaiting_response' WHERE id = %s", (booking_id,))
+        _record_history(cursor, booking_id, booking["status"], "awaiting_response", "admin",
+                        "Datumförslag skapat. Inväntar kundens svar.", actor_id)
+        return proposal
+
+
+def respond_to_proposal(booking_id, proposal_id, email, action, db_path, actor_id=None):
+    """Apply exactly one response to the current proposal, under the booking lock."""
+    if action not in {"accept", "new_date", "cancel"} or not email:
+        return False
+    with _cursor(db_path) as cursor:
+        booking = _lock_booking(cursor, booking_id, email=email)
+        if not booking or booking["status"] != "awaiting_response":
+            return False
+        _execute(cursor, f"SELECT {', '.join(_PROPOSAL_COLUMNS)} FROM booking_proposals "
+                 "WHERE id = %s AND booking_id = %s AND state = 'pending'",
+                 (proposal_id, booking_id))
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        proposal = dict(zip(_PROPOSAL_COLUMNS, row))
+        target, proposal_state, note = {
+            "accept": ("accepted", "accepted", "Kunden har accepterat datumförslaget. Utbildningen är bekräftad."),
+            "new_date": ("new_date_requested", "declined", "Kunden har begärt ett nytt datumförslag."),
+            "cancel": ("cancelled", "cancelled", "Kunden har avbrutit bokningen."),
+        }[action]
+        _execute(cursor, "UPDATE booking_proposals SET state = %s, response = %s, responded_at = %s "
+                 "WHERE id = %s AND state = 'pending'", (proposal_state, action, _now(), proposal_id))
+        if action == "accept":
+            _execute(cursor, "UPDATE bookings SET status = %s, faststallt_datum = %s, "
+                     "faststalld_ort = %s, faststalld_lokal = %s WHERE id = %s",
+                     (target, proposal["proposed_date"], proposal["proposed_city"], proposal["proposed_venue"], booking_id))
+        else:
+            _execute(cursor, "UPDATE bookings SET status = %s WHERE id = %s", (target, booking_id))
+        _record_history(cursor, booking_id, booking["status"], target, "customer", note, actor_id)
+        return True
+
+
+def transition_booking(booking_id, target, db_path, actor="admin", email=None, actor_id=None):
+    """Enforce the role-specific status graph without allowing direct acceptance."""
+    if actor not in {"admin", "customer"} or (actor == "customer" and not email):
+        return False
+    with _cursor(db_path) as cursor:
+        booking = _lock_booking(cursor, booking_id, email=email if actor == "customer" else None)
+        if booking is None:
+            return False
+        source = booking["status"]
+        if actor == "customer":
+            allowed = target == "cancelled" and source in CUSTOMER_CANCELLABLE
+        else:
+            allowed = target in ADMIN_TRANSITIONS.get(source, ())
+        if not allowed:
+            return False
+        _execute(cursor, "UPDATE bookings SET status = %s WHERE id = %s", (target, booking_id))
+        if target == "cancelled":
+            # Cancelling as an administrator deactivates the proposal without
+            # fabricating a customer response or a customer response time.
+            _execute(cursor, "UPDATE booking_proposals SET state = 'cancelled', response = %s, "
+                     "responded_at = %s WHERE booking_id = %s AND state = 'pending'",
+                     ("cancel" if actor == "customer" else None,
+                      _now() if actor == "customer" else None, booking_id))
+        note = {
+            "registered": "Administratören har registrerat förfrågan.",
+            "rescheduled": "Administratören har markerat bokningen som ombokad.",
+            "completed": "Administratören har markerat utbildningen som slutförd.",
+            "cancelled": "Kunden har avbrutit bokningen." if actor == "customer" else "Administratören har avbrutit bokningen.",
+        }[target]
+        _record_history(cursor, booking_id, source, target, actor, note, actor_id)
+        return True
+
+
+def add_booking_note(booking_id, note, db_path, actor_id=None):
+    if not isinstance(note, str) or not note.strip() or len(note) > 5000:
+        return False
+    with _cursor(db_path) as cursor:
+        booking = _lock_booking(cursor, booking_id)
+        if booking is None:
+            return False
+        _record_history(cursor, booking_id, booking["status"], booking["status"], "admin",
+                        note.strip(), actor_id, kind="note", is_private=True)
+        return True
+
+
+def claim_proposal_delivery(proposal_id, db_path):
+    """Only one request may send/retry a still-current unanswered proposal."""
+    with _cursor(db_path) as cursor:
+        _execute(cursor, "UPDATE booking_proposals SET delivery_status = 'sending' "
+                 "WHERE id = %s AND state = 'pending' "
+                 "AND delivery_status IN ('pending', 'failed', 'disabled') "
+                 "AND EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_id AND b.status = 'awaiting_response')",
+                 (proposal_id,))
+        return cursor.rowcount == 1
+
+
+def finish_proposal_delivery(proposal_id, delivery_status, db_path):
+    if delivery_status not in {"sent", "failed", "disabled"}:
+        raise ValueError("Okänt utskicksresultat.")
+    with _cursor(db_path) as cursor:
+        _execute(cursor, "UPDATE booking_proposals SET delivery_status = %s, sent_at = %s "
+                 "WHERE id = %s AND delivery_status = 'sending' RETURNING booking_id",
+                 (delivery_status, _now() if delivery_status == "sent" else None, proposal_id))
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        note = {
+            "sent": "Datumförslaget har skickats med e-post.",
+            "failed": "E-postutskicket misslyckades. Förslaget finns i kundportalen.",
+            "disabled": "E-post är avstängd. Förslaget finns i kundportalen.",
+        }[delivery_status]
+        _record_history(cursor, row[0], None, None, "system", note,
+                        kind="delivery", is_private=delivery_status != "sent")
+        return True
 
 
 def _existing_booking_columns(cursor):
@@ -563,6 +809,52 @@ def _migrate_bookings(cursor):
         "WHERE status = 'pending' AND onskad_ort IS NULL AND ort IS NOT NULL",
     )
 
+    # Older accepted bookings already represent confirmations. Preserve that
+    # meaning and their saved details, without inventing a customer response or
+    # guessing the original wishes of these older rows.
+    _execute(cursor, "UPDATE bookings SET faststallt_datum = COALESCE(faststallt_datum, datum), "
+             "faststalld_ort = COALESCE(faststalld_ort, ort), "
+             "faststalld_lokal = COALESCE(faststalld_lokal, lokal) WHERE status = 'accepted'")
+
+
+def _create_workflow_tables(cursor, id_column):
+    _execute(cursor, f"""CREATE TABLE IF NOT EXISTS booking_proposals (
+        id {id_column},
+        booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        proposed_date TEXT NOT NULL,
+        proposed_city TEXT NOT NULL,
+        proposed_venue TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'declined', 'cancelled')),
+        created_at TEXT NOT NULL,
+        sent_at TEXT,
+        responded_at TEXT,
+        response TEXT CHECK (response IN ('accept', 'new_date', 'cancel')),
+        delivery_status TEXT NOT NULL CHECK (delivery_status IN ('pending', 'sending', 'sent', 'failed', 'disabled'))
+    )""")
+    _execute(cursor, "CREATE UNIQUE INDEX IF NOT EXISTS booking_one_pending_proposal "
+             "ON booking_proposals (booking_id) WHERE state = 'pending'")
+    _execute(cursor, f"""CREATE TABLE IF NOT EXISTS booking_history (
+        id {id_column},
+        booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        from_status TEXT,
+        to_status TEXT,
+        actor TEXT NOT NULL,
+        actor_id INTEGER,
+        note TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'status',
+        is_private INTEGER NOT NULL DEFAULT 0 CHECK (is_private IN (0, 1))
+    )""")
+    _execute(cursor, "CREATE INDEX IF NOT EXISTS booking_history_booking_id ON booking_history (booking_id, id)")
+    # Baseline entries record the state observed at migration, not a fabricated
+    # past transition. Existing IDs, statuses and customer accounts stay intact.
+    _execute(cursor, "INSERT INTO booking_history (booking_id, from_status, to_status, actor, "
+             "note, created_at, kind, is_private) "
+             "SELECT b.id, NULL, b.status, 'system', "
+             "'Befintlig bokning bevarad. Historiken börjar vid migreringen.', %s, 'baseline', 0 "
+             "FROM bookings b WHERE NOT EXISTS (SELECT 1 FROM booking_history h WHERE h.booking_id = b.id)",
+             (_now(),))
+
 
 def create_database(db_path):
     if isinstance(db_path, Path):
@@ -571,6 +863,10 @@ def create_database(db_path):
         id_column = "INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"
 
     with _cursor(db_path) as cursor:
+        if not isinstance(cursor, sqlite3.Cursor):
+            # Serialize additive migrations across simultaneous application
+            # startups without holding a session lock after commit.
+            _execute(cursor, "SELECT pg_advisory_xact_lock(760821943)")
         _execute(
             cursor,
             f"""CREATE TABLE IF NOT EXISTS bookings (
@@ -593,10 +889,12 @@ def create_database(db_path):
                 lokalansvar TEXT,
                 lokaladress TEXT,
                 faststallt_datum TEXT,
-                faststalld_ort TEXT
+                faststalld_ort TEXT,
+                faststalld_lokal TEXT
             )""",
         )
         _migrate_bookings(cursor)
+        _create_workflow_tables(cursor, id_column)
         _execute(
             cursor,
             f"""CREATE TABLE IF NOT EXISTS users (
