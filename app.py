@@ -16,6 +16,7 @@ from psycopg import OperationalError, ProgrammingError
 from psycopg.conninfo import make_conninfo
 import database
 from dev_accounts import load_dev_accounts
+from email_templates import render_email
 from users import user_page
 from admin import admin_page
 from logging_config import LoggedFlask, configure_logging, register_request_logging
@@ -186,31 +187,41 @@ def accept_job(job_id):
     conn.close()
     def send_kursplan_email():
         # Making the email body and subject
-        email_subject = f"Translation Application - Job ID: {job_id}"
-        email_body = f"""
-        Kära Herr/Fru,
-
-        Här är bekräftelsen för jobb-ID: {job_id}.
-
-        Namn: {job_data[0]}
-        E-post: {job_data[1]}
-        Telefonnummer: {job_data[2]}
-        Önskat språk: {job_data[3]}
-        Starttid: {job_data[4]}
-        Sluttid: {job_data[5]}
-
-        Vänligen granska sökandens kvalifikationer och referenser. Om du behöver ytterligare information eller har några frågor, vänligen kontakta sökanden direkt via det angivna e-postadressen eller telefonnumret.
-
-        Tack för att du valde vår tjänst. Vi uppskattar ditt stöd.
-
-        Med vänliga hälsningar,
-        kursplan-teamet"""   
+        email_subject = f"Bekräftelse för uppdrag #{job_id} – Kursplan.se"
+        introduction = f"Här är bekräftelsen för uppdrag #{job_id}."
+        details = (
+            ("Namn", job_data[0]),
+            ("E-post", job_data[1]),
+            ("Telefonnummer", job_data[2]),
+            ("Önskat språk", job_data[3]),
+            ("Starttid", job_data[4]),
+            ("Sluttid", job_data[5]),
+        )
+        explanation = (
+            "Vänligen granska sökandens kvalifikationer och referenser. "
+            "Om du behöver ytterligare information eller har frågor, kontakta "
+            "sökanden via den angivna e-postadressen eller telefonnumret."
+        )
+        email_body = introduction + "\n\n" + "\n".join(
+            f"{label}: {value}" for label, value in details
+        ) + f"\n\n{explanation}\n\nMed vänliga hälsningar,\nKursplan.se"
+        html_body = render_email(
+            title=f"Bekräftelse för uppdrag #{job_id}",
+            preheader="Här finns uppgifterna för det accepterade uppdraget.",
+            introduction=introduction,
+            details=details,
+            explanation=explanation,
+            eyebrow="Ditt uppdrag",
+            status="Accepterat",
+            tone="success",
+        )
         # Prepare email message
-        msg = MIMEMultipart()
+        msg = MIMEMultipart("alternative")
         msg['From'] = os.getenv("email") # Retrieving the email from the session
         msg['To'] = session.get('kursplan_email', '')  # Retrieve the email from the session
         msg['Subject'] = email_subject # Getting the subject
-        msg.attach(MIMEText(email_body, 'plain'))
+        msg.attach(MIMEText(email_body, 'plain', 'utf-8'))
+        msg.attach(MIMEText(html_body, 'html', 'utf-8'))
         smtp_username = os.getenv("email")# Getting the email for the sender
         smtp_password = os.getenv('Email_password') # Getting the password for the sender
         msg['Bcc'] = smtp_username # Adding the secret email to send to self.
@@ -227,30 +238,34 @@ def accept_job(job_id):
             
     def send_user_email():
         # Making the email body and subject
-        email_subject = f"Translation Application - Job ID: {job_id}"
-        email_body = f"""
-                Kära Herr/Fru,
-
-        Din ansökan för jobb-ID: {job_id} har blivit accepterad.
-        
-        Om du inte har använt vår tjänst, vänligen kontakta oss.
-        Här är din information:   
-        Namn: {job_data[0]}
-        Önskat språk: {job_data[3]}
-        Starttid: {job_data[4]}
-        Sluttid: {job_data[5]}
-        
-        
-        Tack för att du valde vår tjänst. Vi uppskattar ditt stöd.
-        
-        
-        Med vänliga hälsningar,
-        kursplan-teamet"""
-        msg = MIMEMultipart()
+        email_subject = f"Din ansökan för uppdrag #{job_id} är accepterad – Kursplan.se"
+        introduction = f"Din ansökan för uppdrag #{job_id} har blivit accepterad."
+        details = (
+            ("Namn", job_data[0]),
+            ("Önskat språk", job_data[3]),
+            ("Starttid", job_data[4]),
+            ("Sluttid", job_data[5]),
+        )
+        notice = "Om du inte har använt vår tjänst, vänligen kontakta oss."
+        email_body = introduction + "\n\n" + "\n".join(
+            f"{label}: {value}" for label, value in details
+        ) + f"\n\n{notice}\n\nMed vänliga hälsningar,\nKursplan.se"
+        html_body = render_email(
+            title="Din ansökan är accepterad",
+            preheader="Här finns uppgifterna för din accepterade ansökan.",
+            introduction=introduction,
+            details=details,
+            notice=notice,
+            eyebrow="Ditt uppdrag",
+            status="Accepterad",
+            tone="success",
+        )
+        msg = MIMEMultipart("alternative")
         msg['From'] = os.getenv("email") # Retrieving the email from the .env file
         msg['To'] = job_data[1] # Retrieving the email from the database
         msg['Subject'] = email_subject # Getting the subject
-        msg.attach(MIMEText(email_body, 'plain')) 
+        msg.attach(MIMEText(email_body, 'plain', 'utf-8'))
+        msg.attach(MIMEText(html_body, 'html', 'utf-8'))
         smtp_username = os.getenv("email")# Getting the email for the sender
         smtp_password = os.getenv('Email_password')# Getting the password for the sender
         msg['Bcc'] = smtp_username # Adding the secret email to send to self.

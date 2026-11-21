@@ -2,6 +2,7 @@
 
 from email import policy
 from email.parser import Parser
+from markupsafe import escape
 import logging
 from smtplib import SMTPException, SMTPServerDisconnected
 from unittest.mock import MagicMock
@@ -61,7 +62,7 @@ def test_verification_mail_escapes_html_link(verification_smtp):
     assert url in message.get_body(preferencelist=("plain",)).get_content()
     html = message.get_body(preferencelist=("html",)).get_content()
     assert '<unsafe>' not in html
-    assert "&amp;extra=&quot;&lt;unsafe&gt;&quot;" in html
+    assert escape(url) in html
 
 
 def test_verification_mail_disabled_never_connects(verification_smtp, monkeypatch):
