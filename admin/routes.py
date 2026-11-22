@@ -4,6 +4,7 @@ from functools import wraps
 from flask import Blueprint, abort, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
+from auth_sessions import end_login_session
 from csrf import clear_booking_csrf_token, get_booking_csrf_token
 import company_lookup
 import database
@@ -24,7 +25,7 @@ def admin_required(func):
         user = database.get_user_identity(user_id, current_app.config["DB_PATH"])
         if user is None or not user["email_verified"]:
             current_app.logger.warning("Administratörsåtkomst nekades: kontot finns inte längre.")
-            session.clear()
+            end_login_session()
             return redirect(url_for("user_page.login"))
         session["role"] = user["role"]
         if user["role"] != "admin":

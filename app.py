@@ -1,6 +1,6 @@
 from multiprocessing.util import debug
 
-from flask import render_template, request, session, redirect, url_for
+from flask import abort, render_template, request, session, redirect, url_for
 import sqlite3
 from datetime import datetime, timedelta
 import smtplib
@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 from psycopg import OperationalError, ProgrammingError
 from psycopg.conninfo import make_conninfo
 import database
+from auth_sessions import end_login_session, refresh_authenticated_session
+from csrf import get_booking_csrf_token, validate_booking_csrf_token
 from dev_accounts import load_dev_accounts
 from email_templates import render_email
 from users import user_page
@@ -34,6 +36,7 @@ app.config["DEV_MODE"] = dev_mode
 app.config["DB_PATH"] = os.getenv("db_path")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=60)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
+app.config["SESSION_COOKIE_SECURE"] = not dev_mode
 
 if dev_mode:
     app.secret_key = app.secret_key or database.generate_secret_key()
@@ -46,10 +49,9 @@ app.register_blueprint(admin_page)
 
 
 @app.before_request
-def keep_authenticated_session_permanent():
-    # Befintliga inloggningar får också 60 dagar från senaste besöket.
-    if session.get("user_id") and not session.permanent:
-        session.permanent = True
+def refresh_session_for_request():
+    if request.endpoint not in {"health", "ready"}:
+        refresh_authenticated_session()
 
 
 def initialize_database():
@@ -122,11 +124,13 @@ if dev_mode:
         raise
 
 
-@app.route('/logout')
+@app.post('/logout')
 def logout():
+    if not validate_booking_csrf_token(request.form.get("csrf_token", "")):
+        abort(400, description="Formuläret kunde inte verifieras. Ladda om sidan och försök igen.")
+    end_login_session()
     app.logger.info("Utloggning genomförd.")
-    session.clear()
-    return redirect(url_for('user_page.index'))  
+    return redirect(url_for('user_page.index'))
 
 
 
@@ -139,6 +143,14 @@ def logout():
 def health():
     """Health check endpoint used by deployment platforms."""
     return {"status": "ok"}, 200
+
+
+@app.get("/ready")
+def ready():
+    headers = {"Cache-Control": "no-store"}
+    if database.database_is_ready(app.config["DB_PATH"]):
+        return {"status": "ok"}, 200, headers
+    return {"status": "unavailable"}, 503, headers
 
 
 
@@ -162,7 +174,7 @@ def get_jobs():
     conn.close()
 
     # Render the bookings.html template with the job data
-    return render_template('bookings.html', jobs=jobs)
+    return render_template('bookings.html', jobs=jobs, csrf_token=get_booking_csrf_token())
 
 def accept_job(job_id):
     app.logger.debug("Accepting legacy job %s", job_id)
@@ -369,7 +381,7 @@ if not dev_mode:
     app.add_url_rule('/jobs/<int:job_id>', view_func=accept_job, methods=['POST'])
     app.add_url_rule('/submit', view_func=submit, methods=['GET', 'POST'])
 
-if __name__ == '__main__':
+def main():
     def stop_on_signal(signum, frame):
         app.logger.info("Stoppsignal mottagen: signal=%s.", signum)
         raise SystemExit(0)
@@ -398,3 +410,7 @@ if __name__ == '__main__':
         raise
     finally:
         app.logger.info("Webbservern har stoppats.")
+
+
+if __name__ == '__main__':
+    main()

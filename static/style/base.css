@@ -48,6 +48,14 @@ form {
     margin-bottom: 60px;
 }
 
+.logout-form {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
 label {
     display: block;
     margin-bottom: 10px;

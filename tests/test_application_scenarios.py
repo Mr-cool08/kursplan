@@ -84,10 +84,13 @@ def test_page_assets_are_served(application_client, path, mimetype):
 def test_logout_clears_identity_and_invalidates_previously_issued_form(application_client, csrf_from_html):
     path = application_client.application.config["DB_PATH"]
     user = database.create_user("Kund", "logout@example.test", "test-password", "5566778899", "user", path)
-    with application_client.session_transaction() as state:
-        state.update(user_id=user[0], role="user", user_email=user[3])
+    login = application_client.get("/login")
+    assert application_client.post("/login", data={
+        "email": "logout@example.test", "password": "test-password",
+        "csrf_token": csrf_from_html(login.get_data(as_text=True)),
+    }).location == "/dashboard"
     token = csrf_from_html(application_client.get("/booking").get_data(as_text=True))
-    response = application_client.get("/logout")
+    response = application_client.post("/logout", data={"csrf_token": token})
     assert response.status_code == 302 and response.location == "/"
     with application_client.session_transaction() as state:
         assert dict(state) == {}
@@ -153,7 +156,7 @@ def test_browser_login_error_can_be_corrected_with_keyboard_and_logout(page, app
     password.press("Enter")
     expect(page).to_have_url(f"{url}/dashboard")
     expect(page.get_by_role("link", name="Gör ny bokning")).to_be_visible()
-    page.get_by_role("link", name="Logga ut").click()
+    page.get_by_role("button", name="Logga ut").click()
     expect(page).to_have_url(f"{url}/")
     page.goto(f"{url}/dashboard")
     expect(page).to_have_url(f"{url}/login")

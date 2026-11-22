@@ -3,9 +3,9 @@
 import json
 import os
 from html.parser import HTMLParser
-from http.cookiejar import CookieJar
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import urlencode, urlsplit
-from urllib.request import HTTPCookieProcessor, build_opener
+from urllib.request import HTTPCookieProcessor, ProxyHandler, build_opener
 
 
 class PageParser(HTMLParser):
@@ -25,12 +25,19 @@ class PageParser(HTMLParser):
             self.token = attributes.get("value")
 
 
-def smoke_test(base_url="http://kursplan:8000"):
-    client = build_opener(HTTPCookieProcessor(CookieJar()))
+def test_http_client(base_url):
+    # The isolated release network connects directly to the app behind TLS ingress.
+    policy = DefaultCookiePolicy(secure_protocols=(urlsplit(base_url).scheme,))
+    return build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar(policy)))
 
-    with client.open(f"{base_url}/health", timeout=10) as response:
-        assert response.status == 200
-        assert json.load(response) == {"status": "ok"}
+
+def smoke_test(base_url="http://kursplan:8000"):
+    client = test_http_client(base_url)
+
+    for path in ("/health", "/ready"):
+        with client.open(f"{base_url}{path}", timeout=10) as response:
+            assert response.status == 200
+            assert json.load(response) == {"status": "ok"}
 
     with client.open(f"{base_url}/", timeout=10) as response:
         assert response.status == 200, "Startsidan svarar inte med HTTP 200."

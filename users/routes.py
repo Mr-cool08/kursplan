@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from psycopg.errors import UniqueViolation
+from auth_sessions import end_login_session, start_login_session
 from csrf import (
     clear_booking_csrf_token,
     get_booking_csrf_token,
@@ -66,7 +67,7 @@ def _current_database_role():
     user = database.get_user_identity(user_id, current_app.config["DB_PATH"])
     if user is None or user["role"] not in VALID_ROLES or not user["email_verified"]:
         current_app.logger.warning("Kundsession avvisades: kontot saknas eller har en ogiltig roll.")
-        session.clear()
+        end_login_session()
         return None
 
     role = user["role"]
@@ -297,7 +298,7 @@ def dashboard():
     organization_number = session.get('organization_number')
     if not email:
         current_app.logger.warning("Kundsession avvisades: obligatoriska kontouppgifter saknas.")
-        session.clear()
+        end_login_session()
         return redirect(url_for('user_page.login'))
     bookings = database.list_booking_details(current_app.config["DB_PATH"], email=email)
     current_app.logger.debug("Kundöversikt hämtad med %s bokningar.", len(bookings))
@@ -348,7 +349,7 @@ def signup():
             # The unique constraint also protects simultaneous registrations.
             return render_template('signup.html', error='Det finns redan ett konto med denna e-postadress.', csrf_token=get_booking_csrf_token()), 400
         current_app.logger.info("Kundkonto skapat: user_id=%s.", user[0])
-        session.clear()
+        end_login_session()
         result = _send_email_verification(email, password)
         _flash_verification_delivery(result, registration=True)
         return redirect(url_for('user_page.login'))
@@ -480,10 +481,8 @@ def login():
         user = database.authenticate_user(email, password, current_app.config["DB_PATH"])
         if user and user[4] in VALID_ROLES:
             user_id, name, organization_number, user_email, role = user
-            session.clear()
-            session.permanent = True
+            start_login_session(user_id)
             session.update(
-                user_id=user_id,
                 user_name=name,
                 organization_number=organization_number,
                 user_email=user_email,
@@ -536,7 +535,8 @@ def booking():
     organization_number = session.get('organization_number')
     if name is None or email is None or organization_number is None:
         current_app.logger.warning("Bokningsförfrågan nekades: obligatoriska kontouppgifter saknas.")
-        return redirect(url_for("logout"))
+        end_login_session()
+        return redirect(url_for("user_page.index"))
 
     booking_id = database.create_booking_request(
         name=name,

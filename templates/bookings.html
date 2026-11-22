@@ -36,9 +36,10 @@
 {% endblock %}
 
 {% block content %}
-    <a href="{{ url_for('logout') }}">
-        <button class="logout-button">Logout</button>
-    </a>
+    <form class="logout-form" method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="logout-button">Logga ut</button>
+    </form>
     <h1>Available Jobs</h1>
 
     {% if jobs %}

@@ -111,7 +111,10 @@
       </div>
       </div>
     </section>
-    <div class="dashboard-actions"><a href="{{ url_for('logout') }}" class="dashboard-button secondary">Logga ut</a></div>
+    <form class="logout-form dashboard-actions" method="post" action="{{ url_for('logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="dashboard-button secondary">Logga ut</button>
+    </form>
   </div>
 </main>
 {% endblock %}

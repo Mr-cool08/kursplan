@@ -19,6 +19,7 @@ _WRITE_OPERATIONS = frozenset({
     "respond_to_proposal", "transition_booking", "add_booking_note",
     "claim_proposal_delivery", "finish_proposal_delivery", "create_database",
     "issue_email_verification", "verify_email_token", "revoke_email_verification",
+    "create_login_session", "revoke_login_session",
 })
 
 
@@ -81,6 +82,27 @@ _BOOKING_DETAIL_COLUMNS = (
 )
 
 _BOOKING_MIGRATION_COLUMNS = _BOOKING_DETAIL_COLUMNS[10:]
+
+
+def database_is_ready(db_path):
+    if not db_path:
+        return False
+
+    try:
+        if isinstance(db_path, Path):
+            uri = f"{db_path.absolute().as_uri()}?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True, timeout=1)) as conn:
+                conn.execute("PRAGMA schema_version").fetchone()
+        else:
+            with psycopg.connect(
+                db_path, connect_timeout=2, options="-c statement_timeout=2000", autocommit=True,
+            ) as conn:
+                conn.execute("SELECT 1")
+    except (psycopg.Error, sqlite3.Error) as exc:
+        logger.warning("Databasens beredskapskontroll misslyckades; feltyp=%s.", type(exc).__name__)
+        return False
+
+    return True
 
 
 @contextmanager
@@ -785,7 +807,7 @@ def issue_email_verification(email, password, db_path):
     return token if issued else None
 
 
-def _verification_digest(token):
+def _token_digest(token):
     if not isinstance(token, str) or len(token) != 43 or not token.isascii():
         return None
     if not all(char.isalnum() or char in "_-" for char in token):
@@ -795,7 +817,7 @@ def _verification_digest(token):
 
 def get_email_verification(token, db_path):
     """Check a link without consuming it (mail scanners may follow GET links)."""
-    digest = _verification_digest(token)
+    digest = _token_digest(token)
     if digest is None:
         return False
     with _cursor(db_path, "get_email_verification") as cursor:
@@ -809,7 +831,7 @@ def get_email_verification(token, db_path):
 
 def get_email_verification_recipient(token, db_path):
     """Return the account's stored address, never an address from the request."""
-    digest = _verification_digest(token)
+    digest = _token_digest(token)
     if digest is None:
         return None
     with _cursor(db_path, "get_email_verification_recipient") as cursor:
@@ -824,7 +846,7 @@ def get_email_verification_recipient(token, db_path):
 
 def verify_email_token(token, db_path):
     """Atomically consume a valid link; never authenticate the browser."""
-    digest = _verification_digest(token)
+    digest = _token_digest(token)
     if digest is None:
         return False
     with _cursor(db_path, "verify_email_token") as cursor:
@@ -849,7 +871,7 @@ def verify_email_token(token, db_path):
 
 def revoke_email_verification(token, db_path):
     """Remove only this failed delivery so a later attempt can retry safely."""
-    digest = _verification_digest(token)
+    digest = _token_digest(token)
     if digest is None:
         return False
     with _cursor(db_path, "revoke_email_verification") as cursor:
@@ -864,6 +886,45 @@ def login_user(email, password, role, db_path):
         logger.debug("Rollspecifik autentisering nekades.")
         return None
     return user[:3]
+
+
+def create_login_session(user_id, db_path, *, now, expires_at, previous_token=None):
+    """Open a browser session and retire its previous session in one transaction."""
+    token = secrets.token_urlsafe(32)
+    digest = _token_digest(token)
+    previous_digest = _token_digest(previous_token)
+    with _cursor(db_path, "create_login_session") as cursor:
+        _execute(cursor, "DELETE FROM login_sessions WHERE expires_at <= %s", (now,))
+        if previous_digest is not None:
+            _execute(cursor, "DELETE FROM login_sessions WHERE token_hash = %s", (previous_digest,))
+        _execute(cursor,
+                 "INSERT INTO login_sessions (token_hash, user_id, expires_at) VALUES (%s, %s, %s)",
+                 (digest, user_id, expires_at))
+    return token
+
+
+def refresh_login_session(token, user_id, db_path, *, now, expires_at):
+    """Extend an active session without recreating it after logout or expiry."""
+    digest = _token_digest(token)
+    if digest is None:
+        return False
+    with _cursor(db_path, "refresh_login_session") as cursor:
+        # A request that arrived earlier cannot shorten a concurrently refreshed session.
+        _execute(cursor,
+                 "UPDATE login_sessions SET expires_at = "
+                 "CASE WHEN expires_at < %s THEN %s ELSE expires_at END "
+                 "WHERE token_hash = %s AND user_id = %s AND expires_at > %s",
+                 (expires_at, expires_at, digest, user_id, now))
+        return cursor.rowcount == 1
+
+
+def revoke_login_session(token, db_path):
+    """Retire just this browser session, including when logout is retried."""
+    digest = _token_digest(token)
+    if digest is None:
+        return
+    with _cursor(db_path, "revoke_login_session") as cursor:
+        _execute(cursor, "DELETE FROM login_sessions WHERE token_hash = %s", (digest,))
 
 
 def get_user_role(user_id, db_path):
@@ -1373,3 +1434,9 @@ def create_database(db_path):
             )""",
         )
         _migrate_users(cursor)
+        _execute(cursor, """CREATE TABLE IF NOT EXISTS login_sessions (
+            token_hash TEXT PRIMARY KEY NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at BIGINT NOT NULL
+        )""")
+        _execute(cursor, "CREATE INDEX IF NOT EXISTS login_sessions_expiry_idx ON login_sessions (expires_at)")

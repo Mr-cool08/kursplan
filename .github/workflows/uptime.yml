@@ -1,0 +1,40 @@
+name: Kursplans driftlarm
+
+on:
+  schedule:
+    - cron: '3-58/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check-readiness:
+    name: Kontrollera kursplan.se via Cloudflare
+    if: github.event_name == 'workflow_dispatch' || vars.KURSPLAN_UPTIME_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Kontrollera HTTPS och databassvar
+        shell: bash
+        run: |
+          response="$RUNNER_TEMP/kursplan-readiness.json"
+          url="https://kursplan.se/ready?probe=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          if ! result=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \
+              --header 'Cache-Control: no-cache' --output "$response" \
+              --write-out '%{http_code} %header{cf-mitigated} %header{cf-ray}' "$url"); then
+            echo '::error::Det gick inte att nå kursplan.se/ready via HTTPS.'
+            exit 1
+          fi
+          read -r status mitigation ray_id <<< "$result"
+          if [[ "$mitigation" == challenge ]]; then
+            echo "::error::Cloudflare krävde en interaktiv kontroll för kursplan.se/ready (Ray ID ${ray_id:-saknas})."
+            exit 1
+          fi
+          if [[ "$status" != 200 ]]; then
+            echo "::error::kursplan.se/ready svarade med HTTP $status."
+            exit 1
+          fi
+          if ! jq -es 'length == 1 and .[0] == {"status":"ok"}' "$response" > /dev/null 2>&1; then
+            echo '::error::kursplan.se/ready returnerade ett oväntat svar.'
+            exit 1
+          fi

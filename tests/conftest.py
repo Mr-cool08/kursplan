@@ -34,6 +34,13 @@ class _CsrfTokenParser(HTMLParser):
 
 
 @pytest.fixture(scope="session")
+def base_url(pytestconfig):
+    # pytest-playwright 0.10.0 uses an instance method for this fixture.
+    # Remove this override once the fix for microsoft/playwright-pytest#341 is released and required.
+    return pytestconfig.getoption("--base-url") or pytestconfig.getini("base_url") or None
+
+
+@pytest.fixture(scope="session")
 def postgres_dsn():
     if test_url := os.getenv("TEST_DATABASE_URL"):
         yield test_url

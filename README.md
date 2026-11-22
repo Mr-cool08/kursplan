@@ -1,20 +1,25 @@
 # Kursplan
 
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/83bc68a7357e4e8db851602ac5ad8259)](https://app.codacy.com/gh/Mr-cool08/kursplan/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![utbildningsintyg.se](https://badge.uptimerobot.com/psp/ad214b38fc38d06c344b10fc72a776bb.svg?style=logo&theme=dark)](https://stats.uptimerobot.com/m20FjS9BDu?utm_source=status_badge&utm_medium=referral)
+![Uptime Robot ratio (30 days)](https://img.shields.io/uptimerobot/ratio/m804754277-bc3ba9763d8d40a7d60bb4d0)
+
+
 ## Inloggningens giltighetstid
 
 Kunder och administratörer förblir inloggade i **60 dagar från senaste besöket**.
-Varje anrop till webbplatsen med en giltig inloggningscookie förnyar tiden med
-60 dagar, även vid besök på en offentlig sida. Cookien sparas med ett
+Vanliga sidbesök med en giltig inloggningscookie förnyar tiden med 60 dagar,
+även på offentliga sidor. Cookien sparas med ett
 utgångsdatum så att inloggningen finns kvar när webbläsaren stängs och öppnas
 igen. Efter 60 dagar utan aktivitet krävs en ny inloggning. **Logga ut**
-avslutar inloggningen direkt i webbläsaren.
+återkallar den aktuella inloggningen på servern och raderar cookien i
+webbläsaren. Andra inloggningar på samma konto fortsätter att gälla.
 
-Inställningen gäller båda rollerna automatiskt, även redan inloggade konton
-när de besöker webbplatsen igen med en giltig cookie. Ingen databasmigrering
-eller ny miljövariabel behövs. Behåll samma `app_secret_key` mellan omstarter
-för att befintliga inloggningscookies ska fortsätta vara giltiga. Om användaren
-raderar sina cookies eller använder privat surfning kan en ny inloggning
-behövas tidigare.
+Tabellen `login_sessions` skapas automatiskt vid uppstart. Kunder och
+administratörer som redan är inloggade när ändringen driftsätts behöver logga in
+på nytt en gång. Behåll samma `app_secret_key` mellan omstarter för att nya
+inloggningscookies ska fortsätta vara giltiga. Om användaren raderar sina
+cookies eller använder privat surfning kan en ny inloggning behövas tidigare.
 
 ## E-postverifiering och lösenord
 
@@ -316,10 +321,10 @@ roterade loggfiler ignoreras av Git och Dockerbygget.
 ## Databasuppgradering för bokningsönskemål
 
 `database.create_database()` skapar inte bara nya tabeller utan kör även den
-återkörbara migrationen av `bookings`. Den körs automatiskt när appen startas
-med `python app.py`, både för PostgreSQL och för SQLite i utvecklingsläget. En
-normal omstart efter att koden har uppdaterats räcker därför; kör inte någon
-databasreset och ta som vanligt en säkerhetskopia före en produktionsuppgradering.
+återkörbara migrationen av `bookings`. Den körs före Gunicorn startar i
+produktionscontainern och vid lokal start med `python app.py`. En normal omstart
+efter att koden har uppdaterats räcker därför; kör inte någon databasreset och ta
+som vanligt en säkerhetskopia före en produktionsuppgradering.
 
 Nya förfrågningar lagrar kundens uppgifter strukturerat:
 
@@ -478,7 +483,7 @@ Playwright innan pytest körs.
 
 CI skapar även `coverage.xml` med `pytest-cov` och sparar rapporten som
 artefakt. Python 3.12-jobbet skickar rapporten till Codacy när GitHub-hemligheten
-`CODACY_API_TOKEN` är konfigurerad med din account API-token. Se
+`CODACY_PROJECT_TOKEN` är konfigurerad med projektets repository-token. Se
 [testguidens avsnitt om testtäckning](tests/README.md#testtäckning-och-codacy)
 för inställning av token och kommandot för att skapa rapporten lokalt.
 
@@ -507,9 +512,10 @@ kurskatalogen och GitHub Actions, samt pytest på Python 3.12 och 3.15 med
 PostgreSQL 18, SQLite och Chromium. På pull requests granskar GitHub även nya
 sårbara beroenden. Snyk rapporterar separat i Actions och Code Scanning.
 
-CI kör samma bygge och isolerade tester som `update.py`. Därefter startar den
-projektets Compose-konfiguration mot en separat PostgreSQL-instans och provar
-`/health`, statiska filer och en
+CI kör samma bygge och isolerade tester som `update.py`. För återställningsprovet
+bygger CI den föregående webbimagen från pull requestens bascommit eller den
+commit som låg på `main` före pushen. CI startar också projektets Compose-konfiguration
+mot en separat PostgreSQL-instans och provar `/health`, `/ready`, statiska filer och en
 administratörsinloggning via nätverksaliaset som tunneln använder. Testrapporter
 och eventuella webbläsarspår sparas i sju dagar i Actions.
 
@@ -517,7 +523,42 @@ Aktivera **Release gate** som obligatorisk kontroll i GitHub och lägg till en
 oberoende granskare med skrivbehörighet för obligatoriska godkännanden. Följ
 [guiden för kodgranskning](.github/code-review.md) för inställningarna för `main`.
 
+### Hälsokontroller och driftlarm
+
+`GET /health` visar att webbprocessen svarar och används av Docker. `GET /ready`
+provar PostgreSQL med `SELECT 1` och tidsgränser för anslutningen och frågan.
+Den svarar med HTTP `200` och `{"status":"ok"}` när databasen går att använda,
+annars med `503` och `{"status":"unavailable"}`. Båda svaren från `/ready` har
+`Cache-Control: no-store`. I utvecklingsläget kontrolleras den aktiva databasen,
+även när appen använder SQLite.
+
+GitHub Actions-flödet **Kursplans driftlarm** gör en extern HTTPS-kontroll mot
+`https://kursplan.se/ready` via Cloudflare var femte minut när schemat är aktiverat.
+Körningen misslyckas vid nätverksfel, avvikande HTTP-status eller felaktigt JSON-svar.
+GitHub kan fördröja schemat och inaktiverar schemalagda flöden i publika repon
+efter 60 dagar utan aktivitet.
+[GitHubs dokumentation om schemalagda körningar](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+
+1. Driftsätt `/ready` och starta **Kursplans driftlarm** manuellt från **Actions**.
+   Om Cloudflare svarar med en botutmaning, använd körningens Ray ID i Cloudflare
+   Security Events för att identifiera källan. Om funktionen stöder ett undantag,
+   begränsa det till den aktuella regeln och `GET /ready` på `kursplan.se`.
+   Kontrollera även att eventuella cache-regler respekterar `no-store` för routen.
+   [Cloudflares dokumentation om regelundantag](https://developers.cloudflare.com/waf/feature-interoperability/)
+2. När den manuella körningen är grön, sätt repository-variabeln
+   `KURSPLAN_UPTIME_ENABLED` till `true` under **Settings → Secrets and variables →
+   Actions → Variables**.
+3. Kontot som äger schemat aktiverar notifieringar för misslyckade Actions-körningar
+   under **Settings → Notifications → Actions**.
+   [GitHubs dokumentation om arbetsflödets mottagare](https://docs.github.com/en/actions/concepts/workflows-and-actions/notifications-for-workflow-runs)
+
 ### Uppdatera produktionen från servern
+
+I drift (`DEV_MODE=false`) får sessionscookien attributet `Secure`. Lokala
+HTTP-inloggningar stöds med `DEV_MODE=true`. Cloudflare ska omdirigera publik
+HTTP till HTTPS och skicka `Strict-Transport-Security` på HTTPS-svar. Efter
+driftsättning, kontrollera de publika svarshuvudena och att `Set-Cookie` vid
+inloggning innehåller `Secure` och `HttpOnly`.
 
 Kör kommandot i Kursplans befintliga projektkatalog på produktionsservern.
 
@@ -528,8 +569,12 @@ python3 update.py
 Skriptet hämtar senaste `origin/main` och kontrollerar att de spårade filerna
 är rena och att `main` kan uppdateras med en fast-forward. Det bygger webbimagen
 och kör tester parallellt med `pytest -n auto`, avstängd e-post, ett tillfälligt
-privat Docker-nätverk och en egen PostgreSQL-databas. Om ett test misslyckas kör
-den befintliga webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet
+privat Docker-nätverk och en egen PostgreSQL-databas. Återställningsprovet skapar
+testbokningar med den image som körs i produktion, startar sedan den nya imagen
+så att den kan migrera testdatabasen och byter tillbaka till den gamla imagen.
+Provet kontrollerar att det uppgraderade schemat finns kvar och att kund- och
+adminflöden kan läsa och ändra bokningar. Om ett test misslyckas kör den befintliga
+webbversionen vidare. Om aktuell commit redan körs kontrollerar skriptet
 databasanslutningen och avslutar.
 
 Efter godkända tester flyttar skriptet fram `main`, driftsätter den testade
@@ -541,6 +586,18 @@ Granska ändringar i `docker-compose.yml` separat innan de införs i produktion.
 Skriptet avbryter uppdateringen när den filen skiljer sig. Säkerhetskopiera
 databasen före schemaändringar och hantera eventuell återställning av en
 databasmigration separat.
+
+PostgreSQL-tjänsten använder `restart: unless-stopped`. För den befintliga
+databascontainern kan driftansvarig aktivera policyn direkt i projektkatalogen
+efter att den nya Compose-filen har granskats och införts.
+
+```sh
+docker update --restart unless-stopped "$(docker compose ps --quiet db)"
+```
+
+Docker tillämpar policyn direkt på containern. En manuellt stoppad databastjänst
+behöver startas manuellt.
+[Dockers dokumentation om omstartspolicyer](https://docs.docker.com/engine/containers/start-containers-automatically/)
 
 Databastjänsten `db` måste redan vara igång och ha hälsostatus `healthy`.
 `update.py` kontrollerar detta före bygg/test och igen innan webbcontainern

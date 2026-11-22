@@ -27,7 +27,7 @@ def session_app(all_db_path, monkeypatch, project_root):
     monkeypatch.setenv("send_mail", "0")
     monkeypatch.setattr("logging_config.configure_logging", lambda app: None)
     app = run_path(str(project_root / "app.py"))["app"]
-    app.config.update(TESTING=True, DB_PATH=all_db_path)
+    app.config.update(TESTING=True, DB_PATH=all_db_path, PREFERRED_URL_SCHEME="https")
     return app
 
 
@@ -57,6 +57,7 @@ def session_clock(monkeypatch):
 
     monkeypatch.setattr("flask.sessions.datetime", FrozenDateTime)
     monkeypatch.setattr(TimestampSigner, "get_timestamp", lambda self: int(clock.now.timestamp()))
+    monkeypatch.setattr("auth_sessions.time", lambda: clock.now.timestamp())
     return clock
 
 
@@ -80,6 +81,7 @@ def _assert_expiration(app, response, expected):
     cookie = _response_cookie(app, response)
     assert parsedate_to_datetime(cookie["expires"]) == expected
     assert cookie["httponly"]
+    assert cookie["secure"]
     return cookie.value
 
 
@@ -115,8 +117,9 @@ def test_public_visit_renews_login_beyond_60_days_since_authentication(
     assert _login(client).status_code == 302
 
     session_clock.advance(timedelta(days=59))
-    response = client.get("/health")
-    assert response.get_json() == {"status": "ok"}
+    response = client.get("/")
+    assert response.status_code == 302
+    assert response.location == destination
     cookie = _assert_expiration(session_app, response, session_clock.now + LIFETIME)
 
     session_clock.advance(timedelta(days=2))
@@ -135,7 +138,7 @@ def test_session_expires_only_after_60_days_since_last_visit(
     client = session_app.test_client()
     assert _login(client).status_code == 302
     session_clock.advance(timedelta(days=17))
-    response = client.get("/health")
+    response = client.get("/")
     cookie = _assert_expiration(session_app, response, session_clock.now + LIFETIME)
 
     session_clock.advance(inactivity)
@@ -148,37 +151,68 @@ def test_session_expires_only_after_60_days_since_last_visit(
             assert "user_id" not in state
 
 
-def test_existing_nonpermanent_login_is_upgraded_on_public_visit(
-    session_app, session_account, session_clock,
+@pytest.mark.parametrize("permanent", [False, True])
+def test_previous_login_format_requires_new_authentication(
+    session_app, session_account, session_clock, permanent,
 ):
     account, destination = session_account
-    serializer = session_app.session_interface.get_signing_serializer(session_app)
-    cookie = serializer.dumps({"user_id": account[0]})
-    session_clock.advance(timedelta(days=20))
-    client = _reopen_browser(session_app, cookie)
-    response = client.get("/health")
-    assert response.status_code == 200
-    upgraded = _assert_expiration(session_app, response, session_clock.now + LIFETIME)
+    client = session_app.test_client()
     with client.session_transaction() as state:
-        assert state.permanent
-        assert state["user_id"] == account[0]
+        state["user_id"] = account[0]
+        state.permanent = permanent
 
-    session_clock.advance(timedelta(days=59))
-    reopened = _reopen_browser(session_app, upgraded)
-    assert reopened.get(destination).status_code == 200
+    response = client.get(destination)
+    assert response.location == "/login"
+    assert _response_cookie(session_app, response)["max-age"] == "0"
+    assert _login(client).location == destination
 
 
-def test_logout_clears_persistent_login(session_app, session_account, session_clock):
-    _, destination = session_account
+def test_logout_retires_only_current_login(
+    session_app, session_account, session_clock, all_db_path, csrf_from_html,
+):
+    account, destination = session_account
     client = session_app.test_client()
     assert _login(client).status_code == 302
-    response = client.get("/logout")
+    other_device = session_app.test_client()
+    assert _login(other_device).status_code == 302
+
+    dashboard = client.get(destination)
+    csrf_token = csrf_from_html(dashboard.get_data(as_text=True))
+    with client.session_transaction() as state:
+        login_token = state["login_session_token"]
+    assert client.get("/logout").status_code == 405
+    assert client.post("/logout").status_code == 400
+    assert client.get(destination).status_code == 200
+    response = client.post("/logout", data={"csrf_token": csrf_token})
     assert response.status_code == 302
     assert _response_cookie(session_app, response)["max-age"] == "0"
+    assert not database.refresh_login_session(
+        login_token, account[0], all_db_path,
+        now=int(session_clock.now.timestamp()),
+        expires_at=int((session_clock.now + LIFETIME).timestamp()),
+    )
     assert client.get(destination).location == "/login"
+    assert other_device.get(destination).status_code == 200
     with client.session_transaction() as state:
         assert "user_id" not in state
         assert not state.permanent
+
+
+def test_protected_route_requires_active_database_session(
+    session_app, session_account, session_clock, all_db_path,
+):
+    _, destination = session_account
+    client = session_app.test_client()
+    assert _login(client).status_code == 302
+    assert client.get(destination).status_code == 200
+    with client.session_transaction() as state:
+        login_token = state["login_session_token"]
+
+    database.revoke_login_session(login_token, all_db_path)
+
+    response = client.get(destination)
+    assert response.location == "/login"
+    assert _response_cookie(session_app, response)["max-age"] == "0"
 
 
 def test_anonymous_visits_do_not_create_persistent_login(session_app, session_clock):

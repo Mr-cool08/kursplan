@@ -50,12 +50,10 @@ tillsammans med testresultaten i respektive artefakt. Efter godkända tester
 skickar endast Python 3.12-jobbet rapporten till Codacy, så att samma commit
 inte får två uppladdningar.
 
-Hämta din account API-token enligt
+Hämta projektets API-token (repository-token) enligt
 [Codacys instruktioner](https://github.com/codacy/codacy-coverage-reporter-action#uploading-coverage-to-codacy)
 och spara den i GitHub-repositoryt under **Settings → Secrets and variables →
-Actions → New repository secret**, med namnet `CODACY_API_TOKEN`.
-GitHub Action hämtar automatiskt organisation/användare och repositorynamn
-från GitHub för att koppla rapporten till rätt projekt i Codacy.
+Actions → New repository secret**, med namnet `CODACY_PROJECT_TOKEN`.
 Om hemligheten saknas, exempelvis för pull requests från en fork, hoppas
 uppladdningen över och XML-rapporten finns fortfarande i artefakten.
 Lokala testkörningar skickar inga rapporter till Codacy.
@@ -86,6 +84,26 @@ Installera testberoendena med samma Python som du använder för `-m pytest`, ä
 | Applikation och webbläsare | `test_application_scenarios.py` | `/health`, 404/405, sidresurser, utloggning, webbläsarvalidering och tangentbordsinloggning efter ett fel. |
 
 De här filerna kompletterar befintliga tester för bokningarnas hela livscykel, samtidiga svar, migreringar, utvecklingsläge, responsiv layout, företagsuppslag, loggning och deploymentlogik.
+
+## Releaseprov för återställning av webbimagen
+
+`update.py` kör provet före driftsättning med ID:t för den befintliga webbimagen.
+GitHub Actions kör samma prov i containerjobbet med en image byggd från pull
+requestens bascommit eller från föregående commit på `main` vid en push.
+
+1. Den gamla imagen startar mot en isolerad PostgreSQL 18-databas. Provet skapar
+   ett kundkonto och testbokningar via HTTP, inklusive en avbokad förfrågan.
+   E-post är avstängd och testkontots e-postadress verifieras direkt i testdatabasen.
+2. Den nya imagen startar mot samma databas och kör sina vanliga startmigreringar.
+   Provet kontrollerar att både kunden och administratören ser testbokningarna.
+3. Den gamla imagen startar igen mot den uppgraderade databasen. Kunden loggar in,
+   avbokar en befintlig förfrågan och skickar en ny. Administratören loggar in och
+   ändrar status på en annan befintlig förfrågan. Provet kontrollerar resultatet i
+   båda vyerna och jämför databasschemat före och efter återställningen.
+
+Den föregående versionen behöver stödja de registrerings- och bokningsflöden som
+provet använder. `test_deployment.py` verifierar ordningen och felhanteringen med
+mockade Docker-kommandon. Det fullständiga releaseprovet kör de riktiga imagerna.
 
 ## Isolering
 

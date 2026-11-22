@@ -1,4 +1,5 @@
 Flask
+gunicorn==27.0.1; sys_platform == "linux"
 python-dotenv
 tzdata
 datetime

@@ -15,6 +15,7 @@ def run_app(tmp_path):
     project = Path(__file__).resolve().parents[1]
     for module in (
         "app.py",
+        "auth_sessions.py",
         "logging_config.py",
         "csrf.py",
         "company_lookup.py",
@@ -140,12 +141,14 @@ def test_dev_mode_uses_temporary_database_without_enabling_debug_logging(run_app
             assert user.post("/verify-email", data={
                 "verification_token": verification_token, "csrf_token": verification_csrf,
             }).location == "/login"
-            user.get("/logout")
             login = user.post("/login", data={
                 "csrf_token": csrf(user, "/login"),
                 "email": "user@example.com", "password": "test-user-password",
             })
             assert login.location == "/dashboard"
+            from http.cookies import SimpleCookie
+            cookie = SimpleCookie(login.headers["Set-Cookie"])[app.config["SESSION_COOKIE_NAME"]]
+            assert not cookie["secure"] and cookie["httponly"]
             assert user.get("/admin/").status_code == 403
 
             class CsrfParser(HTMLParser):
@@ -477,12 +480,12 @@ def test_dev_mode_seeds_booking_history_at_startup_and_preserves_it_on_restart(r
                 booking["id"], db_path, include_actor_details=True,
             ) == histories[booking["id"]]
 
-        admin = database.authenticate_user(
-            accounts["admin"]["email"], accounts["admin"]["password"], db_path,
-        )
         client = app.test_client()
-        with client.session_transaction() as state:
-            state["user_id"] = admin[0]
+        login = client.post("/login", data={
+            "email": accounts["admin"]["email"], "password": accounts["admin"]["password"],
+            "csrf_token": csrf(client, "/login"),
+        })
+        assert login.location == "/admin/"
         logs = client.get("/admin/logs")
         assert logs.status_code == 200
         assert "Exempeldata:" in logs.get_data(as_text=True)

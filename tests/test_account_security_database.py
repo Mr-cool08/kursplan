@@ -1,4 +1,4 @@
-"""Lösenordsmigrering och engångslänkar på SQLite och PostgreSQL."""
+"""Lösenordsmigrering, engångslänkar och sessioner på SQLite och PostgreSQL."""
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
@@ -235,3 +235,54 @@ def test_concurrent_resend_and_verification_have_one_consistent_outcome(all_db_p
         assert replacement and database.get_email_verification(replacement, all_db_path)
         assert database.get_user_identity(user[0], all_db_path)["email_verified"] == 0
     assert not database.get_email_verification(original, all_db_path)
+
+
+def test_login_sessions_are_account_bound_and_revoked_independently(all_db_path):
+    user_id = _create(all_db_path)[0]
+    other_id = _create(all_db_path, email="other-security-account@example.test")[0]
+    first = database.create_login_session(user_id, all_db_path, now=1000, expires_at=2000)
+    second = database.create_login_session(user_id, all_db_path, now=1000, expires_at=2000)
+    with database._cursor(all_db_path) as cursor:
+        database._execute(cursor, "SELECT token_hash FROM login_sessions")
+        assert {row[0] for row in cursor.fetchall()} == {
+            hashlib.sha256(token.encode("ascii")).hexdigest() for token in (first, second)
+        }
+
+    assert not database.refresh_login_session(first, other_id, all_db_path, now=1100, expires_at=2100)
+    assert database.refresh_login_session(first, user_id, all_db_path, now=1100, expires_at=2100)
+    database.revoke_login_session(first, all_db_path)
+    database.revoke_login_session(first, all_db_path)
+
+    assert not database.refresh_login_session(first, user_id, all_db_path, now=1200, expires_at=2200)
+    assert database.refresh_login_session(second, user_id, all_db_path, now=1200, expires_at=2200)
+
+
+def test_login_session_expiration_advances_monotonically_and_cannot_be_reversed(all_db_path):
+    user_id = _create(all_db_path)[0]
+    token = database.create_login_session(user_id, all_db_path, now=1000, expires_at=2000)
+
+    assert database.refresh_login_session(token, user_id, all_db_path, now=1200, expires_at=2200)
+    assert database.refresh_login_session(token, user_id, all_db_path, now=1100, expires_at=2100)
+    assert database.refresh_login_session(token, user_id, all_db_path, now=2199, expires_at=3199)
+    assert not database.refresh_login_session(token, user_id, all_db_path, now=3199, expires_at=4199)
+
+
+def test_login_session_rotation_prunes_expired_sessions_and_preserves_other_sessions(all_db_path):
+    user_id = _create(all_db_path)[0]
+    expired = database.create_login_session(user_id, all_db_path, now=1000, expires_at=1100)
+    previous = database.create_login_session(user_id, all_db_path, now=1000, expires_at=2000)
+    other = database.create_login_session(user_id, all_db_path, now=1000, expires_at=2000)
+
+    # Startup migrations can run again while browsers have active sessions.
+    database.create_database(all_db_path)
+    current = database.create_login_session(
+        user_id, all_db_path, now=1100, expires_at=2100, previous_token=previous,
+    )
+
+    with database._cursor(all_db_path) as cursor:
+        database._execute(cursor, "SELECT token_hash FROM login_sessions")
+        assert len(cursor.fetchall()) == 2
+    assert not database.refresh_login_session(expired, user_id, all_db_path, now=1100, expires_at=2100)
+    assert not database.refresh_login_session(previous, user_id, all_db_path, now=1100, expires_at=2100)
+    assert database.refresh_login_session(other, user_id, all_db_path, now=1100, expires_at=2100)
+    assert database.refresh_login_session(current, user_id, all_db_path, now=1100, expires_at=2100)

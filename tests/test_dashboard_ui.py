@@ -27,7 +27,7 @@ def dashboard_client(project_root, monkeypatch):
     app.config.update(TESTING=True, SECRET_KEY="dashboard-ui-test-key", DB_PATH="unused")
     app.register_blueprint(user_page)
 
-    @app.route("/logout", endpoint="logout")
+    @app.post("/logout")
     def logout():
         session.clear()
         return redirect(url_for("user_page.index"))
@@ -124,11 +124,13 @@ def test_dashboard_cards_preserve_fields_status_and_csrf(dashboard_client):
     for article in parser.articles:
         assert "booking-card" in article.get("class", "").split()
         assert article.get("aria-labelledby") in parser.headings
-    assert len(parser.forms) == 2
+    assert len(parser.forms) == 3
     assert parser.forms[0]["method"].lower() == "get"
     assert parser.forms[0]["action"] == "/dashboard"
     assert parser.forms[1]["method"].lower() == "post"
     assert parser.forms[1]["action"] == "/cancel_booking/11"
+    assert parser.forms[2]["method"].lower() == "post"
+    assert parser.forms[2]["action"] == "/logout"
     assert len(parser.csrf_tokens) >= 1 and parser.csrf_tokens[0]
     with client.session_transaction() as state:
         assert parser.csrf_tokens[0] in state.values()
@@ -187,7 +189,7 @@ def test_dashboard_cards_fit_mobile_and_desktop(page, dashboard_client, width):
 
     controls = [page.get_by_role("link", name="Gör ny bokning"),
                 pending.get_by_role("button", name="Avbryt"),
-                page.get_by_role("link", name="Logga ut")]
+                page.get_by_role("button", name="Logga ut")]
     for control in controls:
         box = control.bounding_box()
         assert box and box["height"] >= 44 and box["width"] >= 44
@@ -327,7 +329,7 @@ def test_dashboard_text_actions_and_all_statuses_have_readable_contrast(
         page.get_by_role("link", name="Gör ny bokning"),
         page.get_by_role("link", name="Visa bokning").first,
         page.get_by_role("button", name="Avbryt").first,
-        page.get_by_role("link", name="Logga ut"),
+        page.get_by_role("button", name="Logga ut"),
     ):
         action.hover()
         action.focus()

@@ -104,7 +104,52 @@ def wait_for_test_container(name):
     raise DeploymentError(f"Testcontainern {name} blev inte frisk.")
 
 
-def build_and_test(source, revision):
+def check_release_images(image, previous_image, db, web, smoke, isolated, health_flags):
+    def start_web_image(web_image):
+        run(
+            "docker", "run", "--detach", "--name", web, *isolated, "--network-alias", "kursplan", *health_flags,
+            "--health-cmd", "python -c 'from urllib.request import urlopen; urlopen(\"http://127.0.0.1:8000/health\", timeout=3)'",
+            web_image,
+        )
+        wait_for_test_container(web)
+
+    probe = ("docker", "run", "--rm", "--name", smoke, *isolated)
+
+    def check_bookings(phase, fixtures=None):
+        result = subprocess.run(
+            (*probe, "--interactive", "--entrypoint", "python", image, "/app/tests/release_rollback_flows.py", phase),
+            input=fixtures, text=True, check=True, stdout=subprocess.PIPE if phase == "seed" else None,
+        )
+        return result.stdout
+
+    def schema():
+        return run(
+            "docker", "exec", db, "pg_dump", "-U", "postgres", "-d", "postgres", "--schema-only",
+            "--restrict-key=KursplanReleaseTest", "--lock-wait-timeout=5s", capture=True,
+        )
+
+    if previous_image is not None:
+        print("Skapar testbokningar med föregående webbimage.", flush=True)
+        start_web_image(previous_image)
+        fixtures = check_bookings("seed")
+        run("docker", "rm", "-fv", web)
+
+    print("Provar den byggda webbimagen på det isolerade nätverket.", flush=True)
+    start_web_image(image)
+    run(*probe, "--entrypoint", "python", image, "/app/tests/release_smoke.py")
+
+    if previous_image is not None:
+        check_bookings("upgrade", fixtures)
+        upgraded_schema = schema()
+        print("Provar föregående webbimage mot det uppgraderade schemat.", flush=True)
+        run("docker", "rm", "-fv", web)
+        start_web_image(previous_image)
+        check_bookings("rollback", fixtures)
+        if schema() != upgraded_schema:
+            raise DeploymentError("Föregående webbimage ändrade det uppgraderade databasschemat.")
+
+
+def build_and_test(source, revision, *, previous_image=None):
     # Distinct names and no published ports or mounts keep the tests off the
     # production database, volume and tunnel, even on the same Docker engine.
     network = f"kursplan-update-{uuid4().hex[:12]}"
@@ -139,14 +184,7 @@ def build_and_test(source, revision):
             "docker", "run", "--rm", "--init", "--shm-size", "1g", "--name", runner, *isolated,
             test_image, "python", "-m", "pytest", "-n", "auto",
         )
-        print("Provar den byggda webbimagen på det isolerade nätverket.", flush=True)
-        run(
-            "docker", "run", "--detach", "--name", web, *isolated, "--network-alias", "kursplan", *health_flags,
-            "--health-cmd", "python -c 'from urllib.request import urlopen; urlopen(\"http://127.0.0.1:8000/health\", timeout=3)'",
-            image_id,
-        )
-        wait_for_test_container(web)
-        run("docker", "run", "--rm", "--name", smoke, *isolated, "--entrypoint", "python", image_id, "/app/tests/release_smoke.py")
+        check_release_images(image_id, previous_image, db, web, smoke, isolated, health_flags)
         return image_id
     finally:
         for command in (
@@ -233,7 +271,7 @@ def update():
     with TemporaryDirectory(prefix="kursplan-update-") as directory:
         source = Path(directory) / "source"
         export_source(revision, source)
-        tested_image = build_and_test(source, revision)
+        tested_image = build_and_test(source, revision, previous_image=previous_image)
 
     if fetch_revision() != revision:
         raise DeploymentError("origin/main ändrades under testningen. Kör update.py igen för den nya committen.")

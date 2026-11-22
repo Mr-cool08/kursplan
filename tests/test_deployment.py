@@ -49,7 +49,7 @@ def test_updates_only_after_build_and_tests_pass(pipeline):
 
     revision, source = pipeline.export_source.call_args.args
     assert revision == REVISION
-    pipeline.build_and_test.assert_called_once_with(source, REVISION)
+    pipeline.build_and_test.assert_called_once_with(source, REVISION, previous_image=OLD_IMAGE)
     assert not Path(source).exists()
     assert pipeline.fetch_revision.call_count == 2
     assert pipeline.verify_checkout.call_count == 2
@@ -58,11 +58,12 @@ def test_updates_only_after_build_and_tests_pass(pipeline):
     pipeline.deploy.assert_called_once_with(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE)
 
     calls = pipeline.mock_calls
-    assert calls.index(call.export_source(REVISION, source)) < calls.index(call.build_and_test(source, REVISION))
-    assert calls.index(call.build_and_test(source, REVISION)) < calls.index(call.run(*GIT_MERGE))
+    build = call.build_and_test(source, REVISION, previous_image=OLD_IMAGE)
+    assert calls.index(call.export_source(REVISION, source)) < calls.index(build)
+    assert calls.index(build) < calls.index(call.run(*GIT_MERGE))
     database_checks = [index for index, step in enumerate(calls) if step == call.verify_database_service()]
-    assert database_checks[0] < calls.index(call.build_and_test(source, REVISION))
-    assert calls.index(call.build_and_test(source, REVISION)) < database_checks[1] < calls.index(call.run(*GIT_MERGE))
+    assert database_checks[0] < calls.index(build)
+    assert calls.index(build) < database_checks[1] < calls.index(call.run(*GIT_MERGE))
     assert calls.index(call.run(*GIT_MERGE)) < calls.index(call.deploy(NEW_IMAGE, WEB_IMAGE, OLD_IMAGE))
 
 
@@ -292,6 +293,40 @@ def test_failed_pytest_cleans_only_its_isolated_resources(tmp_path, monkeypatch)
         ("docker", "rm", "-fv", f"{network}-smoke", runner, f"{network}-web", f"{network}-db"),
         ("docker", "network", "rm", network),
         ("docker", "image", "rm", test_image),
+    ]
+
+
+@pytest.mark.parametrize("rollback_schema", ["upgraded schema", "previous schema"])
+def test_release_probe_reuses_database_and_checks_upgraded_schema(monkeypatch, rollback_schema):
+    commands = Mock()
+    schema_dumps = iter(("upgraded schema", rollback_schema))
+    commands.docker.side_effect = lambda *args, **kwargs: next(schema_dumps) if args[1] == "exec" else None
+    commands.probe.return_value = subprocess.CompletedProcess([], 0, stdout='{"bookings": [1]}')
+    monkeypatch.setattr(update, "run", commands.docker)
+    monkeypatch.setattr(update, "wait_for_test_container", Mock())
+    monkeypatch.setattr(update.subprocess, "run", commands.probe)
+
+    args = (NEW_IMAGE, OLD_IMAGE, "isolated-db", "isolated-web", "isolated-smoke", ("--network", "isolated"), ())
+    if rollback_schema == "upgraded schema":
+        update.check_release_images(*args)
+    else:
+        with pytest.raises(update.DeploymentError, match="ändrade det uppgraderade databasschemat"):
+            update.check_release_images(*args)
+
+    steps = []
+    for name, arguments, kwargs in commands.mock_calls:
+        if name == "probe":
+            steps.append(arguments[0][-1])
+            assert kwargs["input"] == (None if arguments[0][-1] == "seed" else '{"bookings": [1]}')
+        elif arguments[1] == "run" and "--detach" in arguments:
+            steps.append(arguments[-1])
+        elif arguments[1] == "exec":
+            assert arguments[2:4] == ("isolated-db", "pg_dump")
+            steps.append("schema")
+    assert steps == [OLD_IMAGE, "seed", NEW_IMAGE, "upgrade", "schema", OLD_IMAGE, "rollback", "schema"]
+    assert [item for item in commands.docker.call_args_list if item.args[1] == "rm"] == [
+        call("docker", "rm", "-fv", "isolated-web"),
+        call("docker", "rm", "-fv", "isolated-web"),
     ]
 
 

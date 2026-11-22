@@ -101,46 +101,71 @@ jobs:
         if: matrix.python == '3.12'
         id: codacy
         env:
-          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+          CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
         run: |
-          if [[ -n "$CODACY_API_TOKEN" ]]; then
+          if [[ -n "$CODACY_PROJECT_TOKEN" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::CODACY_API_TOKEN saknas; coverage.xml sparas som artefakt."
+            echo "::notice::CODACY_PROJECT_TOKEN saknas; coverage.xml sparas som artefakt."
           fi
       - name: Upload coverage report to Codacy
         if: steps.codacy.outputs.enabled == 'true'
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1.3.0
         with:
-          api-token: ${{ secrets.CODACY_API_TOKEN }}
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: coverage.xml
           language: Python
 
   container:
     name: Build and test production image
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       COMPOSE_PROJECT_NAME: kursplan-ci
       KURSPLAN_IMAGE: kursplan:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Build and test with the production updater
+      - name: Build and test with the production updater, including image rollback
+        env:
+          PREVIOUS_RELEASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           python3 - <<'PY'
           import os
+          import subprocess
           from pathlib import Path
           from tempfile import TemporaryDirectory
+          from uuid import uuid4
 
-          from update import build_and_test, export_source
+          from update import REVISION_LABEL, build_and_test, export_source, run
 
           revision = os.environ["GITHUB_SHA"]
+          previous_revision = os.environ["PREVIOUS_RELEASE_SHA"]
+          if not previous_revision or previous_revision in {"0" * 40, revision}:
+              raise SystemExit("Föregående version saknas för återställningsprovet.")
+          try:
+              run("git", "rev-parse", "--verify", f"{previous_revision}^{{commit}}", capture=True)
+          except subprocess.CalledProcessError:
+              raise SystemExit("Föregående version saknas i den hämtade Git-historiken.") from None
+
           with TemporaryDirectory(prefix="kursplan-ci-") as directory:
-              source = Path(directory) / "source"
+              root = Path(directory)
+              source = root / "source"
+              previous_source = root / "previous-source"
               export_source(revision, source)
-              build_and_test(source, revision)
+              export_source(previous_revision, previous_source)
+              previous_tag = f"kursplan:ci-previous-{uuid4().hex}"
+              run(
+                  "docker", "build", "--pull", "--label", f"{REVISION_LABEL}={previous_revision}",
+                  "--tag", previous_tag, "--file", str(previous_source / "dockerfile"), str(previous_source),
+              )
+              try:
+                  previous_image = run("docker", "image", "inspect", "--format", "{{.Id}}", previous_tag, capture=True)
+                  build_and_test(source, revision, previous_image=previous_image)
+              finally:
+                  subprocess.run(("docker", "image", "rm", previous_tag), check=False)
           PY
       - name: Prepare an isolated Compose stack
         id: compose

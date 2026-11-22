@@ -58,6 +58,7 @@ services:
 
   db:
     image: postgres:18
+    restart: unless-stopped
 
     environment:
       POSTGRES_PASSWORD: ${db_password:-password}
