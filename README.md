@@ -476,6 +476,12 @@ vanlig användare.
 Chromium används av webbläsartesterna. I CI installeras den automatiskt med
 Playwright innan pytest körs.
 
+CI skapar även `coverage.xml` med `pytest-cov` och sparar rapporten som
+artefakt. Python 3.12-jobbet skickar rapporten till Codacy när GitHub-hemligheten
+`CODACY_API_TOKEN` är konfigurerad med din account API-token. Se
+[testguidens avsnitt om testtäckning](tests/README.md#testtäckning-och-codacy)
+för inställning av token och kommandot för att skapa rapporten lokalt.
+
 Om insamlingen av tester avbryts med `ModuleNotFoundError: No module named 'playwright'`
 behöver testberoendena installeras i samma Python-miljö som kör pytest. Se
 [testguiden](tests/README.md) för fullständiga installationskommandon för Windows
@@ -485,7 +491,7 @@ Om den inbyggda PostgreSQL-versionen inte finns för din plattform kan du
 installera övriga testberoenden separat i samma virtuella miljö:
 
 ```sh
-python -m pip install -r requirements.txt "pytest-playwright>=0.7,<1"
+python -m pip install -r requirements.txt "pytest-playwright>=0.7,<1" "pytest-cov>=7,<8"
 python -m playwright install chromium
 ```
 

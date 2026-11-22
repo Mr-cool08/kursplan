@@ -83,7 +83,9 @@ jobs:
           python -m pip check
           python -m playwright install --with-deps chromium
       - name: Run PostgreSQL, SQLite and browser tests
-        run: python -m pytest --junitxml=pytest.xml --tracing=retain-on-failure
+        run: >-
+          python -m pytest --cov --cov-report=term-missing --cov-report=xml:coverage.xml
+          --junitxml=pytest.xml --tracing=retain-on-failure
       - name: Upload test report and browser traces
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -91,9 +93,28 @@ jobs:
           name: test-results-python-${{ matrix.python }}
           path: |
             pytest.xml
+            coverage.xml
             test-results/
           overwrite: true
           retention-days: 7
+      - name: Check Codacy configuration
+        if: matrix.python == '3.12'
+        id: codacy
+        env:
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+        run: |
+          if [[ -n "$CODACY_API_TOKEN" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CODACY_API_TOKEN saknas; coverage.xml sparas som artefakt."
+          fi
+      - name: Upload coverage report to Codacy
+        if: steps.codacy.outputs.enabled == 'true'
+        uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1.3.0
+        with:
+          api-token: ${{ secrets.CODACY_API_TOKEN }}
+          coverage-reports: coverage.xml
+          language: Python
 
   container:
     name: Build and test production image

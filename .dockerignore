@@ -7,6 +7,10 @@ kursplan-dev-*.db*
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 logs/
 *.log
 *.log.*

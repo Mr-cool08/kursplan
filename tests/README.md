@@ -30,6 +30,36 @@ python3 -m venv .venv
 
 `--with-deps` installerar även Chromiums systembibliotek och kan kräva administratörsbehörighet. Kör själva pytest som vanlig användare.
 
+## Testtäckning och Codacy
+
+`pytest-cov` ingår i `requirements-test.txt`. För att skapa samma coverage-rapport
+lokalt som i CI, kör från projektroten:
+
+```powershell
+.\venv\Scripts\python.exe -m pytest -n 4 --cov --cov-report=term-missing --cov-report=xml:coverage.xml
+```
+
+Rapporten visas i terminalen och sparas som `coverage.xml` i Cobertura-format.
+`.coveragerc` aktiverar rad- och grentäckning, använder sökvägar relativt
+projektroten och undantar testerna samt de virtuella miljöerna. Rapportfilerna
+ignoreras av Git och Docker. Vanlig `pytest` utan `--cov` körs utan mätning.
+Kod i separata processer som testerna själva startar mäts inte automatiskt.
+
+GitHub Actions skapar rapporten på både Python 3.12 och 3.15 och sparar den
+tillsammans med testresultaten i respektive artefakt. Efter godkända tester
+skickar endast Python 3.12-jobbet rapporten till Codacy, så att samma commit
+inte får två uppladdningar.
+
+Hämta din account API-token enligt
+[Codacys instruktioner](https://github.com/codacy/codacy-coverage-reporter-action#uploading-coverage-to-codacy)
+och spara den i GitHub-repositoryt under **Settings → Secrets and variables →
+Actions → New repository secret**, med namnet `CODACY_API_TOKEN`.
+GitHub Action hämtar automatiskt organisation/användare och repositorynamn
+från GitHub för att koppla rapporten till rätt projekt i Codacy.
+Om hemligheten saknas, exempelvis för pull requests från en fork, hoppas
+uppladdningen över och XML-rapporten finns fortfarande i artefakten.
+Lokala testkörningar skickar inga rapporter till Codacy.
+
 ## Om Playwright saknas
 
 `ModuleNotFoundError: No module named 'playwright'` under insamlingen betyder att testmiljön saknar Playwright. `pytest-playwright` i `requirements-test.txt` installerar Python-paketet; Chromium installeras separat med kommandot ovan. Enbart `requirements.txt` räcker inte för hela testsviten.
