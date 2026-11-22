@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="sv" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+  <title>{{ title }} – Kursplan.se</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    table { border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    a:focus-visible { outline: 3px solid #2458b8; outline-offset: 4px; }
+    @media only screen and (max-width: 520px) {
+      .email-outer { padding: 16px 8px !important; }
+      .email-header { padding: 24px !important; }
+      .email-content { padding: 28px 24px 32px !important; }
+      .email-title { font-size: 29px !important; line-height: 36px !important; }
+      .detail-label, .detail-value { display: block !important; width: auto !important; }
+      .detail-label { padding: 14px 16px 2px !important; border-bottom: 0 !important; }
+      .detail-value { padding: 0 16px 14px !important; }
+      .email-footer { padding: 24px 16px !important; }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; width: 100%; background-color: #f3f5f8; color: #182b48; font-family: 'Trebuchet MS', Verdana, sans-serif;">
+  <div aria-hidden="true" style="display: none; font-size: 1px; line-height: 1px; color: #f3f5f8; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; mso-hide: all;">{{ preheader }}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f5f8" style="width: 100%; background-color: #f3f5f8;">
+    <tr>
+      <td class="email-outer" align="center" style="padding: 40px 16px;">
+        <!--[if mso]><table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fefefe" style="width: 100%; max-width: 640px; table-layout: fixed; background-color: #fefefe; border: 1px solid #dfe5ee;">
+          <tr>
+            <td height="4" bgcolor="#2458b8" style="height: 4px; font-size: 0; line-height: 0; background-color: #2458b8;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td class="email-header" bgcolor="#182b48" style="padding: 28px 40px; background-color: #182b48;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; table-layout: fixed;">
+                <tr>
+                  <td width="68" valign="middle" style="width: 68px; vertical-align: middle;">
+                    <a href="https://kursplan.se/" style="display: inline-block; background-color: #fefefe; padding: 5px; text-decoration: none;">
+                      <img src="https://kursplan.se/static/images/favicon/JKA_Logo.png" alt="JKA" width="44" height="41" style="display: block; width: 44px; height: 41px; background-color: #fefefe; color: #182b48; font-size: 14px;">
+                    </a>
+                  </td>
+                  <td valign="middle" style="vertical-align: middle; overflow-wrap: anywhere; word-wrap: break-word;">
+                    <a href="https://kursplan.se/" style="color: #fefefe; font-size: 25px; line-height: 32px; font-weight: bold; text-decoration: none;">Kursplan.se</a>
+                    <p style="margin: 2px 0 0; color: #d0dcef; font-size: 12px; line-height: 20px;">Företagsutbildningar</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="email-content" style="padding: 36px 40px 40px; overflow-wrap: anywhere; word-wrap: break-word;">
+              <p style="margin: 0 0 12px; color: #315db5; font-size: 11px; line-height: 18px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase;">{{ eyebrow }}</p>
+              <h1 class="email-title" style="margin: 0 0 20px; color: #182b48; font-family: Georgia, 'Times New Roman', serif; font-size: 34px; font-weight: normal; line-height: 42px; overflow-wrap: anywhere; word-wrap: break-word;">{{ title }}</h1>
+              {% if status %}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 24px; max-width: 100%;">
+                <tr><td bgcolor="{{ status_background }}" style="padding: 6px 12px; background-color: {{ status_background }}; color: {{ status_color }}; font-size: 12px; font-weight: bold; line-height: 18px; overflow-wrap: anywhere; word-wrap: break-word;">{{ status }}</td></tr>
+              </table>
+              {% endif %}
+              <p style="margin: 0 0 24px; color: #3e506a; font-size: 16px; line-height: 27px; overflow-wrap: anywhere; word-wrap: break-word;">{{ introduction }}</p>
+              {% if details %}
+              <table aria-label="Uppgifter" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f5f8" style="width: 100%; table-layout: fixed; margin: 0 0 28px; background-color: #f3f5f8; border-top: 1px solid #dfe5ee;">
+                {% for label, value in details %}
+                <tr>
+                  <th class="detail-label" width="37%" scope="row" align="left" valign="top" style="width: 37%; padding: 14px 16px; border-bottom: 1px solid #dfe5ee; color: #52617a; font-size: 13px; line-height: 22px; font-weight: normal; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-wrap: break-word;">{{ label }}</th>
+                  <td class="detail-value" align="left" valign="top" style="padding: 14px 16px 14px 0; border-bottom: 1px solid #dfe5ee; color: #182b48; font-size: 14px; line-height: 22px; font-weight: bold; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-wrap: break-word;">{{ value }}</td>
+                </tr>
+                {% endfor %}
+              </table>
+              {% endif %}
+              {% if explanation %}
+              <p style="margin: 0 0 24px; color: #3e506a; font-size: 15px; line-height: 26px; overflow-wrap: anywhere; word-wrap: break-word;">{{ explanation }}</p>
+              {% endif %}
+              {% if actions %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; table-layout: fixed; margin: 0 0 20px;">
+                {% for label, url in actions %}
+                <tr>
+                  <td style="padding-bottom: 10px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; table-layout: fixed;">
+                      <tr>
+                        <td align="center" bgcolor="{{ '#2458b8' if loop.first else '#fefefe' }}" style="background-color: {{ '#2458b8' if loop.first else '#fefefe' }}; border: 1px solid {{ '#2458b8' if loop.first else '#cbd6e5' }}; border-radius: 5px; text-align: center; mso-padding-alt: 14px 20px;">
+                          <a href="{{ url }}" style="display: block; padding: 14px 20px; color: {{ '#fefefe' if loop.first else '#284773' }}; font-size: 15px; line-height: 22px; font-weight: bold; text-align: center; text-decoration: none; border-radius: 5px; overflow-wrap: anywhere; word-wrap: break-word; mso-padding-alt: 0;">{{ label }}</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                {% endfor %}
+              </table>
+              <p style="margin: 0 0 24px; color: #52617a; font-size: 12px; line-height: 20px;">Om knappen inte fungerar kan du kopiera länken till din webbläsare:<br>
+                <a href="{{ actions[0][1] }}" style="color: #2458b8; text-decoration: underline; overflow-wrap: anywhere; word-wrap: break-word; word-break: break-all;">{{ actions[0][1] }}</a>
+              </p>
+              {% endif %}
+              {% if notice %}
+              <p style="margin: 0 0 28px; padding-top: 20px; border-top: 1px solid #dfe5ee; color: #52617a; font-size: 13px; line-height: 23px; overflow-wrap: anywhere; word-wrap: break-word;">{{ notice }}</p>
+              {% endif %}
+              <p style="margin: 8px 0 0; color: #3e506a; font-size: 14px; line-height: 24px;">Med vänliga hälsningar,<br><strong style="color: #182b48;">Kursplan.se</strong></p>
+            </td>
+          </tr>
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 640px; table-layout: fixed;">
+          <tr>
+            <td class="email-footer" align="center" style="padding: 24px 20px 8px; color: #52617a; font-size: 11px; line-height: 20px; text-align: center; overflow-wrap: anywhere; word-wrap: break-word;">
+              <a href="https://kursplan.se/" style="color: #284773; text-decoration: underline;">Kursplan.se</a><br>
+              Järnvägskonsulterna i Norden AB
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -21,6 +21,7 @@ def run_app(tmp_path):
         "database.py",
         "password_security.py",
         "dev_accounts.py",
+        "email_templates.py",
         "gen_func.py",
         "time_display.py",
         "utbildningar.json",

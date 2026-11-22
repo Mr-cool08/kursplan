@@ -2,7 +2,7 @@
 
 from email import policy
 from email.parser import Parser
-from html import escape
+from markupsafe import escape
 import logging
 from smtplib import SMTPException, SMTPServerDisconnected
 from unittest.mock import MagicMock
@@ -104,7 +104,7 @@ def test_status_mail_escapes_user_fields_and_booking_link(status_mail):
     html = message.get_body(preferencelist=("html",)).get_content()
     assert unsafe in plain and url in plain
     assert unsafe not in html and "<unsafe>" not in html
-    assert escape(unsafe) in html and escape(url, quote=True) in html
+    assert escape(unsafe) in html and escape(url) in html
 
 
 def test_status_mail_uses_trimmed_smtp_settings_and_verified_tls(status_mail, monkeypatch):

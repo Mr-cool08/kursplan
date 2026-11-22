@@ -5,8 +5,9 @@ import ssl
 from smtplib import SMTP, SMTPException
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from html import escape
 from urllib.parse import urlencode
+
+from email_templates import render_email
 
 
 logger = logging.getLogger(__name__)
@@ -58,11 +59,31 @@ def send_booked_mail(email, booking_date, ort, booking_id, utbildning):
             logger.warning("Bokningsbekräftelse skickades inte; ogiltig SMTP-port.")
             return False
 
-        message = MIMEMultipart()
+        title = "Din bokning är bekräftad"
+        introduction = "Din utbildning är bekräftad med uppgifterna nedan."
+        details = (
+            ("Bokningsnummer", f"#{booking_id}"),
+            ("Utbildning", utbildning),
+            ("Utbildningsdatum", booking_date),
+            ("Ort", ort),
+        )
+        plain = f"{title}\n\n{introduction}\n\n"
+        plain += "\n".join(f"{label}: {value}" for label, value in details)
+        plain += "\n\nMed vänliga hälsningar,\nKursplan.se"
+        html = render_email(
+            title=title,
+            preheader="Här finns uppgifterna för din bekräftade utbildning.",
+            introduction=introduction,
+            details=details,
+            status="Bekräftad",
+            tone="success",
+        )
+        message = MIMEMultipart("alternative")
         message["From"] = send_mail
         message["To"] = email
         message["Subject"] = "Bokningsbekräftelse"
-        message.attach(MIMEText(f"Din bokning är bekräftad för {utbildning} i {ort} på {booking_date}. Din bokningsnummer är {booking_id}.", "plain"))
+        message.attach(MIMEText(plain, "plain", "utf-8"))
+        message.attach(MIMEText(html, "html", "utf-8"))
 
         logger.debug("Bokningsbekräftelse: ansluter till SMTP.")
         try:
@@ -122,11 +143,15 @@ def send_proposal_mail(booking, proposal, booking_url):
     plain = introduction + "\n\n" + "\n".join(f"{label}: {value}" for label, value in details)
     plain += "\n\n" + explanation + "\n\n" + "\n\n".join(f"{label}:\n{link}" for label, link in links)
     plain += "\n\nMed vänliga hälsningar,\nKursplan.se"
-    html = "<!doctype html><html lang='sv'><body>" + f"<h1>Datumförslag för bokning #{booking['id']}</h1><p>{escape(introduction)}</p><dl>"
-    html += "".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in details)
-    html += f"</dl><p>{escape(explanation)}</p>"
-    html += "".join(f'<p><a href="{escape(link, quote=True)}">{escape(label)}</a></p>' for label, link in links)
-    html += "<p>Med vänliga hälsningar,<br>Kursplan.se</p></body></html>"
+    html = render_email(
+        title=f"Datumförslag för bokning #{booking['id']}",
+        preheader="Ett nytt datumförslag väntar på ditt svar i kundportalen.",
+        introduction=introduction,
+        details=details,
+        explanation=explanation,
+        actions=links,
+        status="Inväntar ditt svar",
+    )
     message = MIMEMultipart("alternative")
     message["From"] = sender
     message["To"] = recipient
@@ -213,15 +238,16 @@ def send_booking_status_mail(booking, status, booking_url):
     plain += "\n".join(f"{label}: {value}" for label, value in details)
     plain += f"\n\n{explanation}\n\nVisa bokningen:\n{booking_url}"
     plain += "\n\nMed vänliga hälsningar,\nKursplan.se"
-    html = (
-        "<!doctype html><html lang='sv'><body>"
-        f"<h1>{escape(title)}</h1><p>{escape(introduction)}</p><dl>"
-    )
-    html += "".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in details)
-    html += (
-        f"</dl><p>{escape(explanation)}</p>"
-        f'<p><a href="{escape(booking_url, quote=True)}">Visa bokningen</a></p>'
-        "<p>Med vänliga hälsningar,<br>Kursplan.se</p></body></html>"
+    html = render_email(
+        title=title,
+        preheader=("Här finns uppgifterna för din bekräftade utbildning." if accepted
+                   else "Din bokning är avbruten. Historiken finns kvar på ditt konto."),
+        introduction=introduction,
+        details=details,
+        explanation=explanation,
+        actions=(("Visa bokningen", booking_url),),
+        status="Accepterad" if accepted else "Avbruten",
+        tone="success" if accepted else "neutral",
     )
     message = MIMEMultipart("alternative")
     message["From"] = sender
@@ -283,11 +309,14 @@ def send_verification_mail(email, verification_url):
         f"{introduction}\n\n{explanation}\n\nVerifiera e-postadress:\n{verification_url}"
         f"\n\n{unsolicited}\n\nMed vänliga hälsningar,\nKursplan.se"
     )
-    html = (
-        "<!doctype html><html lang='sv'><body><h1>Verifiera din e-postadress</h1>"
-        f"<p>{escape(introduction)}</p><p>{escape(explanation)}</p>"
-        f'<p><a href="{escape(verification_url, quote=True)}">Verifiera e-postadress</a></p>'
-        f"<p>{escape(unsolicited)}</p><p>Med vänliga hälsningar,<br>Kursplan.se</p></body></html>"
+    html = render_email(
+        title="Verifiera din e-postadress",
+        preheader="Bekräfta din e-postadress för att komma igång. Länken gäller i 24 timmar.",
+        introduction=introduction,
+        explanation=explanation,
+        actions=(("Verifiera e-postadress", verification_url),),
+        notice=unsolicited,
+        eyebrow="Ditt konto",
     )
     message = MIMEMultipart("alternative")
     message["From"] = sender
